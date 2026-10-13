@@ -1,0 +1,11 @@
+# Smoke E2E: the dev clip, a few frames, every system, tight budgets.
+inherit: base.yaml
+
+run:
+  name: smoke
+  max_frames_per_clip: 5
+
+budget:
+  max_jev_requests: 20
+  max_jev_tokens: 60000
+  max_vlm_calls: 200

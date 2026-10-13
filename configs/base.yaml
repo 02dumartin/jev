@@ -1,0 +1,102 @@
+# Base experiment config. Every value that changes a result lives here (PLAN.md).
+# Child configs set `inherit: base.yaml` and override only what differs.
+
+run:
+  name: dev                 # run folder = runs/<YYMMDD>_<name>
+  out_root: runs
+  split: dev                # which clip split to process: dev | test
+  max_frames_per_clip: null # null = all frames; smoke uses a small number
+  systems: [threshold, vlm, jev, gate]
+
+data:
+  root: data/brackish-dataset
+  images_dir: images
+  aau_csvs:
+    - annotations/annotations_AAU/train.csv
+    - annotations/annotations_AAU/valid.csv
+    - annotations/annotations_AAU/test.csv
+  split_lists: [train.txt, valid.txt, test.txt]
+  frame_wh: [960, 540]
+
+# Fixed before any result was seen (PLAN.md §2.3). Changing these triggers the jev-loop intent check.
+clips:
+  dev:
+    - 2019-03-19_17-02-30to2019-03-19_17-02-42_1
+  test:
+    - 2019-03-21_05-01-24to2019-03-21_05-01-31_1
+    - 2019-03-19_19-30-33to2019-03-19_19-30-45_1
+
+detector:
+  model: IDEA-Research/grounding-dino-base
+  prompt: "fish . crab . shrimp . jellyfish . starfish ."
+  box_threshold: 0.15
+  text_threshold: 0.15
+  nms_iou: 0.5
+  max_candidates_per_frame: 30
+  max_box_area_frac: 0.5     # drop near-full-frame boxes (whole-scene detections)
+  batch_size: 8
+  device: cuda:0
+
+label:
+  real_iou: 0.5              # max IoU with GT >= real_iou  -> y = 1
+  fake_iou: 0.3              # max IoU with GT <  fake_iou  -> y = 0; in between -> ambiguous (y = null)
+
+evidence:
+  history_frames: 5          # causal window: only the previous K frames
+  match_iou: 0.3             # IoU to link a box to a previous-frame candidate
+
+prompts:
+  context: >-
+    Fixed underwater camera in turbid brackish water (960x540 video). A zero-shot object detector
+    proposed a candidate box. Expected animals: fish, small fish, crab, shrimp, jellyfish, starfish.
+    False candidates are usually turbidity, floating particles, bubbles, seabed texture, or the
+    camera frame.
+  question: "Is there a real marine animal inside this candidate box?"
+
+jev:
+  model: jev-latest
+  endpoint: https://api.typesafe.ai/v1/systemone
+  api_key_env: TYPESAFE_API_KEY
+  batching: per_frame        # per_frame: one request per frame, one Noul question per box | per_box
+  timeout_s: 30
+  max_retries: 3
+  max_concurrency: 8
+
+vlm:
+  model: Qwen/Qwen3-VL-8B-Instruct
+  dtype: bfloat16
+  device: cuda:0
+  batch_size: 16
+  crop_context: 1.0          # crop = box expanded by this fraction of its size on each side
+  crop_long_side: 336        # crop is resized so its longer side has this many pixels
+  box_color: [255, 0, 0]
+  box_width: 3
+
+gate:
+  max_auto_error: 0.05       # tau = smallest value whose dev auto-handled error <= this
+  tau_grid_step: 0.01
+
+thresholds_file: null        # test runs must point to a dev-fitted thresholds.yaml
+
+metrics:
+  ece_bins: 15
+  bootstrap:
+    n: 2000
+    block_frames: 10         # consecutive frames per resampling block (frames are not independent)
+    seed: 0
+  regression_tol: 0.01
+
+# Pre-registered endpoints (PLAN.md §5). Evaluated in order; stop at the first failure.
+endpoints:
+  sequential:
+    - {name: primary, min_delta_acc_ci_low: -0.02, max_vlm_call_ratio: 0.5}
+    - {name: stricter_acc, min_delta_acc_ci_low: -0.01, max_vlm_call_ratio: 0.5}
+    - {name: stricter_calls, min_delta_acc_ci_low: -0.01, max_vlm_call_ratio: 0.3}
+
+budget:
+  max_jev_requests: 3000
+  max_jev_tokens: 3000000
+  max_vlm_calls: 20000
+
+cost:
+  jev_usd_per_1m_tokens: null  # unknown; fill from the TypeSafe console

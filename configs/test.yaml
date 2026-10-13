@@ -1,0 +1,8 @@
+# Final test evaluation. Run once, after thresholds were fitted on dev (PLAN.md §7).
+inherit: base.yaml
+
+run:
+  name: test
+  split: test
+
+thresholds_file: thresholds.yaml
