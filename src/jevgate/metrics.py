@@ -53,6 +53,17 @@ def reliability_bins(y, p, n_bins: int) -> list[dict]:
     return rows
 
 
+def auroc(y, score) -> float | None:
+    """Probability that a random real box scores above a random fake box (ties count half)."""
+    y, score = np.asarray(y, dtype=bool), np.asarray(score, dtype=float)
+    pos, neg = score[y], score[~y]
+    if len(pos) == 0 or len(neg) == 0:
+        return None
+    greater = (pos[:, None] > neg[None, :]).sum()
+    ties = (pos[:, None] == neg[None, :]).sum()
+    return float((greater + 0.5 * ties) / (len(pos) * len(neg)))
+
+
 def brier(y, p) -> float | None:
     y, p = np.asarray(y, dtype=float), np.asarray(p, dtype=float)
     return float(((p - y) ** 2).mean()) if len(y) else None

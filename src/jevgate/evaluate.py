@@ -24,6 +24,9 @@ def _system_row(system, rows, labels, timing, cfg, vlm_latency: dict) -> dict:
         row["ece"], row["brier"], row["n_calibrated"] = M.ece(ys, ps, n_bins), M.brier(ys, ps), len(ps)
     else:
         row["ece"] = row["brier"] = None
+    # Diagnostic: ranking quality of the score each system thresholds (not an endpoint).
+    score_key = {"threshold": "score", "vlm": "p_yes", "jev": "p_real"}.get(system)
+    row["auroc"] = M.auroc(y, [r[score_key] for r, _ in scored]) if score_key else None
     row["vlm_calls"] = {"threshold": 0, "jev": 0, "vlm": len(rows)}.get(
         system, sum(r.get("routed_to") == "vlm" for r in rows))
     lat = [r["latency_ms"] for r in rows]

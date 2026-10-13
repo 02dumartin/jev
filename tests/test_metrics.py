@@ -44,3 +44,9 @@ def test_endpoints_stop_at_first_failure():
     res = [r["result"] for r in M.evaluate_endpoints(-0.015, 0.4, steps)]
     assert res == ["pass", "fail", "not_tested"]
     assert [r["result"] for r in M.evaluate_endpoints(None, 0.4, steps)] == ["not_tested"] * 3
+
+
+def test_auroc():
+    assert M.auroc([1, 1, 0, 0], [0.9, 0.8, 0.2, 0.1]) == 1.0
+    assert M.auroc([1, 0], [0.5, 0.5]) == 0.5
+    assert M.auroc([1, 1], [0.1, 0.2]) is None
