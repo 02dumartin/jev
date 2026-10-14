@@ -24,8 +24,8 @@ def main() -> None:
     if "tau_need_vlm" not in th:
         raise SystemExit("refusing: run has no Jev decisions, gate thresholds missing")
     args.out.write_text(yaml.safe_dump(th, sort_keys=False))
-    print(f"wrote {args.out}: t={th['t']}, tau_need_vlm={th['tau_need_vlm']}, tau_conf={th['tau_conf']} "
-          f"(from {run.run_id})")
+    fitted = ", ".join(f"{k}={v}" for k, v in th.items() if k == "t" or k.startswith("tau"))
+    print(f"wrote {args.out}: {fitted} (from {run.run_id})")
 
 
 if __name__ == "__main__":
