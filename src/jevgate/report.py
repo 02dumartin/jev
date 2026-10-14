@@ -25,7 +25,7 @@ FILE_GUIDE = [
     ("errors.csv", "②·③·④ 중 하나라도 틀린 박스 목록"),
     ("cache/", "비싼 단계 원본 (vlm.jsonl, jev.jsonl, jev_responses.jsonl) — 재사용·재개용"),
     ("figures/", "아래 그림 4장"),
-    ("samples/", "무작위 프레임의 비교 이미지 (GT | 시스템별 판정)"),
+    ("viz/", "무작위 프레임 오버레이: 보기별 폴더(gt, vlm, jev, gate)와 한 장에 모은 compare/"),
 ]
 
 

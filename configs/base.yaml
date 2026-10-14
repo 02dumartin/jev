@@ -124,7 +124,7 @@ plots:
   appendix: false            # true -> figures/appendix/ with per-system ROC, 2x2 grids, confusion matrices
 
 viz:
-  sample_frames: 12          # random frames rendered as one comparison image each (samples/)
+  sample_frames: 12          # random frames rendered under viz/<view>/ and viz/compare/
   seed: 0
 
 budget:

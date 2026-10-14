@@ -199,7 +199,7 @@ class Pipeline:
         figures = plots.plot_run(run)
         viz.render_samples(run, gt, cfg["viz"]["sample_frames"], cfg["viz"]["seed"])
         run.file("report").write_text(report.render(run, metrics, figures))
-        log("S8 figures, samples and README written")
+        log("S8 figures, viz and README written")
         return run
 
     # S5 helpers ------------------------------------------------------------------------------

@@ -10,7 +10,7 @@ runs/<run_id>/
 ├── errors.csv        boxes a main system got wrong
 ├── cache/            expensive judge outputs (vlm.jsonl, jev.jsonl, jev_responses.jsonl, vlm_prompt.txt)
 ├── figures/          fig1..fig4 (+ appendix/ when enabled)
-└── samples/          one comparison image per sampled frame
+└── viz/              sampled frames: one folder per view (gt, [dino], vlm, jev, gate) + compare/
 """
 
 import datetime as dt
