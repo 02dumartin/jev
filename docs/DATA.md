@@ -40,10 +40,25 @@
 평가 단위는 GT 박스가 아니라 **DINO 후보 박스**다. 후보 수와 클래스별 y 분포(background 포함)는 실행마다
 `runs/<run>/label_summary.md`에 기록된다. 전체 실행 결과는 아래에 채운다.
 
-| | 후보 박스 | 채점 대상 | ambiguous | background | DINO recall 상한 |
-|---|---|---|---|---|---|
-| dev | (실행 후 기입) | | | | |
-| test | (실행 후 기입) | | | | |
+| | 후보 박스 | 채점 대상 | ambiguous | background | 동물 (6종 합) | DINO recall 상한 |
+|---|---|---|---|---|---|---|
+| dev (`261014_dev`) | 49,916 | 48,034 | 1,882 | 23,299 | 24,735 | 0.769 |
+| test (`261014_test`) | 5,506 | 5,293 | 213 | 2,714 | 2,579 | 0.742 |
+
+클래스별 후보 박스 y (채점 대상) 와 DINO recall 상한:
+
+| 클래스 | dev 후보 (y=클래스) | dev recall 상한 | test 후보 (y=클래스) |
+|---|---|---|---|
+| fish | 2,644 | 0.864 | 282 |
+| small_fish | 8,593 | 0.875 | 836 |
+| crab | 5,564 | **0.502** | 598 |
+| shrimp | 378 | 0.766 | 44 |
+| jellyfish | 549 | 0.955 | 54 |
+| starfish | 7,007 | 0.982 | 765 |
+| background | 23,299 | – | 2,714 |
+
+- crab은 GT의 절반을 DINO가 아예 후보로 내지 못한다(작고 바닥에 붙어 있음). 어떤 판정 시스템도 이 절반은 복구할 수 없다.
+- test에서 shrimp 44, jellyfish 54 → 클래스별 CI가 넓다.
 
 참고 (dev 60프레임 점검 실행 `261014_smoke60`, box_threshold 0.25): 후보 219개 = 채점 206 + ambiguous 13,
 y = fish 10 · small_fish 31 · crab 30 · shrimp 1 · jellyfish 3 · starfish 33 · background 98, recall 상한 0.806.
