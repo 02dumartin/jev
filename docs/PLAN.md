@@ -1,7 +1,11 @@
-# jev-gate 실험 계획 (v3, 2026-10-14)
+# jev-gate 실험 계획 (v4, 2026-10-14)
 
 > 질문: Grounding DINO가 낸 후보 박스가 **무엇인가**(6종 생물 또는 background)를 판정할 때,
 > Jev(calibrated 확률)를 게이트로 쓰면 VLM 호출을 줄이면서 정확도를 유지할 수 있는가?
+>
+> **v4 (2026-10-14): 평가는 GT 박스로 한다.** 후보 = AAU GT 박스(전부 실제 동물) → background 없는 6-way 분류,
+> ① detector 없음, Jev는 박스 크기·위치·움직임(이전 프레임 GT 박스 위치, 클래스 제외)만 본다. DINO 방식은 `configs/dino.yaml`로 보존.
+> run 폴더 구성과 그림 4장은 `src/jevgate/runio.py`·`plots.py` docstring과 각 run의 README.md 참고.
 >
 > v3 (test 결과를 보기 전, 2026-10-14): 원본 train+valid = dev / test = test (전체 데이터), Jev에게 class와 need_vlm(5단계)을 함께 묻고
 > need_vlm이 높은 박스만 VLM으로 넘기는 게이트를 primary로, 시간 기록 보강. §14 참고. n 수는 `docs/DATA.md`.
@@ -320,6 +324,7 @@ jev-gate/
 
 - v1 (2026-10-13): 이진 판정, 클립 3개, endpoint 사전 등록.
 - v2 (2026-10-14, 결과 보기 전): 7-way 클래스 판정 (6종 + background), VLM은 선택지 logit, Jev는 `choice`, 클립 8개로 재선정 (dev·test 각 6종 포함), 단계별 산출물 정의.
+- v4 (2026-10-14): GT 박스 평가로 전환 (DINO 후보 결과 `261014_dev/test`는 삭제, primary 실패: Δacc +0.036 [0.027, 0.047], 호출 비율 0.818). run 폴더를 README·run.yaml·frames·boxes·judgments·metrics·errors·cache·figures·samples로 정리, 그림 4장(fig1 trade-off, fig2 per-class, fig3 Jev self-knowledge, fig4 calibration).
 - v3 (2026-10-14, test 결과 보기 전): 원본 train+valid/test 분할로 전체 데이터 사용, Jev need_vlm 5단계 질문 추가, primary = need_vlm 게이트(④a·④c는 secondary), 시간 기록 보강.
   dev 점검(`261014_smoke`, `261014_smoke60`)으로 정한 것: DINO box_threshold 0.15 → 0.25 (동물 박스 20개 중 19개 유지, background 후보 약 75% 감소), 공통 맥락 문장 보강, VLM에도 DINO 제안 라벨·score 제공, Jev 클래스 정의를 state에 한 번만 기재(입력 토큰 −22%).
   관찰: dev 60프레임에서 VLM이 동물 박스 대부분을 background로 판정(정확도 0.646). background logit 보정은 +3%p뿐이라 넣지 않았다.
