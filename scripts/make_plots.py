@@ -1,4 +1,4 @@
-"""Redraw every S7 figure of a finished run from its metrics.json and plots_data.json."""
+"""Redraw the figures of a finished run from its metrics.json."""
 
 import argparse
 from pathlib import Path

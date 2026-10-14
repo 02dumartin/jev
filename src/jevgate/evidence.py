@@ -41,7 +41,8 @@ def track_features(box, history: list[list[dict]], match_iou: float) -> dict:
             best_prev_iou = float(ious[j])
         if ious[j] >= match_iou:
             seen += 1
-            mean_scores.append(prev[j]["dino_score"])
+            if prev[j].get("dino_score") is not None:
+                mean_scores.append(prev[j]["dino_score"])
             if step == 0:
                 pb = prev[j]["box_xyxy"]
                 dx = (box[0] + box[2] - pb[0] - pb[2]) / 2
@@ -76,12 +77,11 @@ def build_evidence(candidates: list[dict], context_candidates: list[dict], conte
         clip, idx = c["clip"], c["frame_idx"]
         prev_idxs = [i for i in range(idx - 1, idx - k - 1, -1) if (clip, i) in processed]  # most recent first
         history = [by_frame[(clip, i)] for i in prev_idxs]
-        out.append({
-            "cand_id": c["cand_id"],
-            "history_frame_idxs": prev_idxs,
-            "detector": {"label": c["dino_label"], "score": round(c["dino_score"], 3)},
-            "geometry": geometry(c["box_xyxy"], wh),
-            "track": track_features(c["box_xyxy"], history, match_iou),
-            "scene": {"candidates_in_frame": len(by_frame.get((clip, idx), []))},
-        })
+        row = {"cand_id": c["cand_id"], "history_frame_idxs": prev_idxs}
+        if c.get("dino_label") is not None:  # GT-box candidates have no detector output
+            row["detector"] = {"label": c["dino_label"], "score": round(c["dino_score"], 3)}
+        row |= {"geometry": geometry(c["box_xyxy"], wh),
+                "track": track_features(c["box_xyxy"], history, match_iou),
+                "scene": {"candidates_in_frame": len(by_frame.get((clip, idx), []))}}
+        out.append(row)
     return out

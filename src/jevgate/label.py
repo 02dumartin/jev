@@ -72,33 +72,14 @@ def detector_coverage(candidates: list[dict], frames: list[dict], gt: BrackishGT
 def label_summary(candidates: list[dict], labels: list[dict], coverage: dict, classes: list[str]) -> dict:
     """Count flow: GT objects -> covered/missed; candidates -> y per class, ambiguous, scored."""
     y = Counter(r["y"] for r in labels)
-    dino_vs_y = Counter((c["dino_label"], r["y"]) for c, r in zip(candidates, labels, strict=True))
+    dino_vs_y = Counter((c.get("dino_label"), r["y"]) for c, r in zip(candidates, labels, strict=True)
+                        if c.get("dino_label") is not None)
     return {
         "gt_objects": coverage,
         "candidates": len(candidates),
         "scored": sum(r["scored"] for r in labels),
         "ambiguous": y[AMBIGUOUS],
         "y_per_class": {c: y[c] for c in classes},
-        "dino_label_counts": dict(Counter(c["dino_label"] for c in candidates)),
+        "dino_label_counts": dict(Counter(c["dino_label"] for c in candidates if c.get("dino_label") is not None)),
         "dino_label_vs_y": {f"{a}->{b}": n for (a, b), n in sorted(dino_vs_y.items())},
     }
-
-
-def summary_markdown(s: dict, classes: list[str]) -> str:
-    """Human-readable version of label_summary for the run folder."""
-    cov = s["gt_objects"]
-    lines = [
-        "# Label summary", "",
-        f"- GT objects: {cov['gt']}, covered by a DINO candidate (IoU >= match): {cov['covered']} "
-        f"(recall upper bound {cov['recall_upper_bound']:.3f}), missed: {cov['missed']}",
-        f"- DINO candidates: {s['candidates']} = scored {s['scored']} + ambiguous {s['ambiguous']}", "",
-        "| class | GT objects | covered | missed | recall upper bound | candidates with y = class |",
-        "|---|---|---|---|---|---|",
-    ]
-    for c in classes:
-        pc = cov["per_class"].get(c)
-        ub = f"{pc['recall_upper_bound']:.3f}" if pc and pc["recall_upper_bound"] is not None else "–"
-        lines.append(f"| {c} | {pc['gt'] if pc else '–'} | {pc['covered'] if pc else '–'} | "
-                     f"{pc['missed'] if pc else '–'} | {ub} | {s['y_per_class'][c]} |")
-    lines.append(f"| ambiguous (excluded) | | | | | {s['ambiguous']} |")
-    return "\n".join(lines) + "\n"

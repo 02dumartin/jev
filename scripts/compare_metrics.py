@@ -1,6 +1,6 @@
 """④ Regression check of a dev run against the last row of metrics_history.jsonl (PLAN.md §8).
 
-Exit code 1 when accuracy/precision/recall dropped, or ECE rose, by more than metrics.regression_tol.
+Exit code 1 when accuracy/macro F1/precision/recall dropped, or ECE rose, by more than metrics.regression_tol.
 With --append the run is added to the history (do it only after a pass or an explained drop).
 """
 
@@ -14,13 +14,14 @@ from jevgate.config import config_hash
 from jevgate.runio import RunDir
 
 REPO = Path(__file__).resolve().parents[1]
-HIGHER_IS_BETTER = ["accuracy", "precision", "recall"]
+HIGHER_IS_BETTER = ["accuracy", "macro_f1", "macro_precision", "macro_recall"]
 LOWER_IS_BETTER = ["ece"]
-COLUMNS = ["accuracy", "precision", "recall", "ece", "vlm_calls", "latency_ms_median", "jev_cost_usd"]
+COLUMNS = ["accuracy", "macro_f1", "macro_precision", "macro_recall", "ece", "vlm_calls", "latency_ms_median",
+           "jev_cost_usd"]
 
 
 def history_row(run: RunDir) -> dict:
-    m = run.read_json("metrics.json")
+    m = run.read_json("metrics")
     cfg = run.config()
     return {
         "date": dt.date.today().isoformat(), "run_id": run.run_id, "git_commit": m["git_commit"],

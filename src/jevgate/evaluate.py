@@ -1,4 +1,4 @@
-"""S7: results table, per-class one-vs-rest numbers, timing, endpoints and plot data (PLAN.md §5, §6)."""
+"""S7: every number of a run (and the curve data the figures draw) -> metrics.json (PLAN.md §5, §6)."""
 
 import csv
 from collections import defaultdict
@@ -11,7 +11,7 @@ from .gate import GATES, auto_curve, conf_grid, need_vlm_grid
 from .runio import RunDir
 
 SYSTEM_ORDER = ["threshold", "vlm", "jev", "gate", "gate_conf", "gate_either"]
-SYSTEM_TITLE = {"threshold": "① detector (DINO score ≥ t)", "vlm": "② DINO + VLM", "jev": "③ DINO + Jev",
+SYSTEM_TITLE = {"threshold": "① detector (DINO score ≥ t)", "vlm": "② VLM", "jev": "③ Jev",
                 "gate": "④ Jev need_vlm gate", "gate_conf": "④a Jev confidence gate", "gate_either": "④c either gate"}
 PROB_SYSTEMS = ("threshold", "vlm", "jev")  # systems with a full class-score vector for ROC
 
@@ -24,15 +24,15 @@ class RunData:
         self.cfg = run.config()
         self.classes = class_names(self.cfg)
         self.frames = run.read("frames")
-        self.cands = run.read("candidates")
-        self.labels = {r["cand_id"]: r for r in run.read("labels")}
-        self.decisions = {s: run.read_decisions(s) for s in SYSTEM_ORDER if s in run.systems_done()}
+        self.cands = run.read("boxes")
+        self.labels = {b["cand_id"]: b for b in self.cands}
+        rows = run.system_rows()
+        self.decisions = {s: rows[s] for s in SYSTEM_ORDER if s in rows}
         self.frame_of = {c["cand_id"]: (c["clip"], c["frame_idx"]) for c in self.cands}
-        self.scored_ids = [c["cand_id"] for c in self.cands if self.labels[c["cand_id"]]["scored"]]
+        self.scored_ids = [c["cand_id"] for c in self.cands if c["scored"]]
         self.y = [self.labels[i]["y"] for i in self.scored_ids]
-        self.timing = run.read_json("timing.json") if (run.path / "timing.json").exists() else {}
-        self.detect_ms = {(r["clip"], r["frame_idx"]): r["detect_ms"] for r in run.read_json("detect_ms.json")} \
-            if (run.path / "detect_ms.json").exists() else {}
+        self.timing = run.meta().get("timing_s", {})
+        self.detect_ms = {(f["clip"], f["frame_idx"]): f["detect_ms"] for f in self.frames if f.get("detect_ms")}
 
     def scored_rows(self, system: str) -> list[dict]:
         by_id = {r["cand_id"]: r for r in self.decisions[system]}
@@ -90,6 +90,8 @@ def _system_row(data: RunData, system: str, boot: M.BlockBootstrap) -> dict:
     rows = data.scored_rows(system)
     preds = [r["pred"] for r in rows]
     row = M.multiclass_metrics(data.y, preds, classes)
+    correct = np.asarray([p == yy for p, yy in zip(preds, data.y, strict=True)], dtype=float)
+    row["accuracy_ci"] = list(boot.ci(lambda idx: float(correct[idx].mean()) if len(idx) else None))
     row["macro_precision"] = _mean([v["precision"] for v in row["per_class"].values() if v["support"]])
     row["macro_recall"] = _mean([v["recall"] for v in row["per_class"].values() if v["support"]])
     row["ovr"] = {c: M.ovr_counts(data.y, preds, c) for c in classes}
@@ -175,14 +177,15 @@ def _sensitivity(data: RunData) -> dict:
     return out
 
 
-def _frame_visibility(data: RunData, gt_count: dict) -> dict:
+def _frame_visibility(data: RunData) -> dict:
     keys = [(f["clip"], f["frame_idx"]) for f in data.frames]
+    has_animal = {(f["clip"], f["frame_idx"]): f["gt_status"] == "annotated" for f in data.frames}
     out = {}
     for s, rows in data.decisions.items():
         animal = defaultdict(bool)
         for r in rows:
             animal[data.frame_of[r["cand_id"]]] |= r["pred"] != BACKGROUND
-        out[s] = M.frame_visible_accuracy(keys, {k: gt_count.get(k, 0) > 0 for k in keys}, animal)
+        out[s] = M.frame_visible_accuracy(keys, has_animal, animal)
     return out
 
 
@@ -227,8 +230,8 @@ def write_errors(data: RunData, path) -> int:
             if not wrong:
                 continue
             c = cand[i]
-            w.writerow([i, file_of[data.frame_of[i]], c["box_xyxy"], yy, data.labels[i]["max_iou"], c["dino_label"],
-                        c["dino_score"]] + [by_sys[s][i]["pred"] for s in systems]
+            w.writerow([i, file_of[data.frame_of[i]], c["box_xyxy"], yy, data.labels[i]["max_iou"],
+                        c.get("dino_label"), c.get("dino_score")] + [by_sys[s][i]["pred"] for s in systems]
                        + [by_sys[s][i]["confidence"] for s in systems]
                        + [by_sys["jev"][i].get("need_vlm") if "jev" in by_sys else None,
                           by_sys[primary][i].get("routed_to") if primary in by_sys else None])
@@ -236,8 +239,8 @@ def write_errors(data: RunData, path) -> int:
     return n
 
 
-def evaluate_run(run: RunDir, gt_count: dict, label_summary: dict) -> dict:
-    """Build metrics.json (+ plots_data.json, errors.csv) for a run whose S1-S6 outputs exist."""
+def evaluate_run(run: RunDir, n_flow: dict) -> dict:
+    """metrics.json content (curve data included) + errors.csv for a run whose boxes and judgments exist."""
     data = RunData(run)
     cfg = data.cfg
     b = cfg["metrics"]["bootstrap"]
@@ -251,8 +254,7 @@ def evaluate_run(run: RunDir, gt_count: dict, label_summary: dict) -> dict:
     ci_low = primary["delta_acc"]["ci_low"] if primary["delta_acc"] else None
     endpoints = M.evaluate_endpoints(ci_low, primary["call_ratio"], cfg["endpoints"]["sequential"])
 
-    run.write_json("plots_data.json", _plot_data(data, systems))
-    n_errors = write_errors(data, run.path / "errors.csv")
+    n_errors = write_errors(data, run.file("errors"))
     return {
         "run_id": run.run_id,
         "split": cfg["run"]["split"],
@@ -263,77 +265,18 @@ def evaluate_run(run: RunDir, gt_count: dict, label_summary: dict) -> dict:
         "n_frame": len(data.frames),
         "n_box": len(data.scored_ids),
         "n_candidates": len(data.cands),
-        "label_summary": label_summary,
-        "thresholds": run.read_json("thresholds.json") if (run.path / "thresholds.json").exists() else None,
+        "candidate_source": cfg["candidates"]["source"],
+        "n_flow": n_flow,
+        "thresholds": run.meta().get("thresholds"),
         "systems": systems,
         "primary": primary,
         "secondary_gate_deltas": {g: {"delta_acc": deltas[g], "call_ratio": call_ratio[g]} for g in deltas},
         "endpoints": endpoints,
         "jev_self_knowledge": _jev_selfknowledge(data) if "jev" in data.decisions else None,
-        "frame_visible_accuracy": _frame_visibility(data, gt_count),
+        "frame_visible_accuracy": _frame_visibility(data),
         "sensitivity": _sensitivity(data),
         "timing_stages_s": data.timing,
         "jev_models": sorted({r.get("jev_model") for r in data.decisions.get("jev", []) if r.get("jev_model")}),
         "n_error_rows": n_errors,
+        "curves": _plot_data(data, systems),
     }
-
-
-def _f(v, digits=3):
-    return "–" if v is None else f"{v:.{digits}f}"
-
-
-def metrics_markdown(m: dict) -> str:
-    """Results tables in the reporting order: accuracy -> macro F1 -> precision -> recall -> ECE -> calls -> time."""
-    lines = [f"# Results — {m['run_id']} ({m['split']})", "",
-             f"n_box {m['n_box']} (scored) / candidates {m['n_candidates']} · n_frame {m['n_frame']} · "
-             f"n_video {m['n_clip']} · DINO recall upper bound "
-             f"{_f(m['label_summary']['gt_objects']['recall_upper_bound'])}", "",
-             "| system | accuracy | macro F1 | macro precision | macro recall | ECE | VLM calls | "
-             "latency/box ms (median) | frame ms (mean) | fps | Jev tokens |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
-    for s in SYSTEM_ORDER:
-        if s not in m["systems"]:
-            continue
-        r = m["systems"][s]
-        lines.append(f"| {SYSTEM_TITLE[s]} | {_f(r['accuracy'])} | {_f(r['macro_f1'])} | {_f(r['macro_precision'])} | "
-                     f"{_f(r['macro_recall'])} | {_f(r['ece'])} | {r['vlm_calls']} | {_f(r['latency_ms_median'], 1)} | "
-                     f"{_f(r['frame_ms_mean'], 1)} | {_f(r['fps'], 2)} | {r['jev_tokens']} |")
-    classes = m["classes"]
-    lines += ["", "## Per-class recall (sensitivity) / precision", "",
-              "| system | " + " | ".join(classes) + " |", "|---|" + "---|" * len(classes)]
-    for s in SYSTEM_ORDER:
-        if s in m["systems"]:
-            pc = m["systems"][s]["per_class"]
-            lines.append(f"| {s} | " + " | ".join(f"{_f(pc[c]['recall'], 2)} / {_f(pc[c]['precision'], 2)}"
-                                                  for c in classes) + " |")
-    lines += ["", "| support | " + " | ".join(str(m["systems"][next(iter(m["systems"]))]["per_class"][c]["support"])
-                                              for c in classes) + " |"]
-    lines += ["", "## AUC [95% CI] (one-vs-rest)", "", "| system | " + " | ".join(classes) + " |",
-              "|---|" + "---|" * len(classes)]
-    for s in SYSTEM_ORDER:
-        if s in m["systems"] and "auc" in m["systems"][s]:
-            a = m["systems"][s]["auc"]
-            cells = [f"{_f(a[c]['auc'], 2)} [{_f(a[c]['ci_low'], 2)}, {_f(a[c]['ci_high'], 2)}]" for c in classes]
-            lines.append(f"| {s} | " + " | ".join(cells) + " |")
-    p = m["primary"]
-    if p["delta_acc"]:
-        d = p["delta_acc"]
-        lines += ["", "## Primary endpoint", "",
-                  f"- gate: `{p['gate']}`; Δacc vs ② = {_f(d['delta'])} "
-                  f"[95% CI {_f(d['ci_low'])}, {_f(d['ci_high'])}]; "
-                  f"VLM call ratio = {_f(p['call_ratio'])}",
-                  "- sequential: " + "; ".join(f"{e['name']}: {e['result']}" for e in m["endpoints"])]
-        for g, v in m["secondary_gate_deltas"].items():
-            lines.append(f"- {g}: Δacc {_f(v['delta_acc']['delta'])} [{_f(v['delta_acc']['ci_low'])}, "
-                         f"{_f(v['delta_acc']['ci_high'])}], call ratio {_f(v['call_ratio'])}")
-    if m.get("jev_self_knowledge"):
-        k = m["jev_self_knowledge"]
-        lines += ["", "## Does Jev know when it is wrong?", "",
-                  f"- AUROC(need_vlm → Jev error) = {_f(k['auroc_need_vlm_for_error'])}, "
-                  f"AUROC(1 − confidence → Jev error) = {_f(k['auroc_unconfidence_for_error'])}", "",
-                  "| need_vlm level | n | Jev error |", "|---|---|---|"]
-        lines += [f"| {lv} | {v['n']} | {_f(v['jev_error'])} |" for lv, v in k["jev_error_by_need_vlm_level"].items()]
-    if m.get("thresholds"):
-        lines += ["", f"thresholds: `{ {k: v for k, v in m['thresholds'].items() if k.startswith(('t', 'tau'))} }`"]
-    lines += ["", "## Stage times (s)", "", ", ".join(f"{k} {v}" for k, v in m["timing_stages_s"].items())]
-    return "\n".join(lines) + "\n"

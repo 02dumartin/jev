@@ -1,5 +1,11 @@
-"""S7 figures (PLAN.md §3.3): per-class ROC with AUC [CI], one-vs-rest 2x2 grids, confusion matrices,
-reliability diagrams, gate curves, and a paper-style main figure (A/B ROC, C/D 2x2).
+"""S8 figures, drawn from metrics.json only. Each main figure answers one question:
+
+  fig1_tradeoff     Does the gate keep accuracy while cutting VLM calls? (primary endpoint)
+  fig2_per_class    Where do the systems differ by class? (A/B ROC + AUC [CI], C/D one-vs-rest 2x2)
+  fig3_jev_knows    Does Jev know when it is wrong, and how was tau chosen?
+  fig4_calibration  Can Jev's and the VLM's probabilities be trusted? (reliability diagrams)
+
+figures/appendix/ (plots.appendix: true) adds per-system ROC, 2x2 grids and confusion matrices.
 
 Class colours follow a fixed categorical order (validated palette); background is neutral grey.
 Every class also has its own marker and a legend label, so identity never relies on colour alone.
@@ -96,7 +102,7 @@ def draw_2x2(ax, counts: dict, cls: str, color: str, greyed: bool):
 
 def draw_2x2_grid(fig_or_sub, ovr: dict, support: dict, classes: list[str], min_n: int, title: str):
     style = class_style(classes)
-    cols = 4
+    cols = (len(classes) + 1) // 2
     axes = fig_or_sub.subplots(2, cols)
     for k, ax in enumerate(axes.flat):
         if k >= len(classes):
@@ -152,55 +158,115 @@ def draw_auto_curve(ax, curve: list[dict], tau, xlabel: str, title: str):
     ax.legend(fontsize=7, frameon=False)
 
 
+SYSTEM_COLOR = {"threshold": PALETTE[3], "vlm": PALETTE[1], "jev": PALETTE[0], "gate": PALETTE[2],
+                "gate_conf": PALETTE[4], "gate_either": PALETTE[5]}
+
+
+def draw_tradeoff(ax, m: dict, step: dict):
+    """Accuracy (95% CI) vs share of boxes sent to the VLM; shaded = primary success region."""
+    n = m["n_candidates"]
+    vlm_acc = m["systems"].get("vlm", {}).get("accuracy")
+    if vlm_acc is not None:
+        floor = vlm_acc + step["min_delta_acc_ci_low"]
+        ax.axhspan(floor, 1.0, xmin=0, xmax=step["max_vlm_call_ratio"] / 1.05, color="#1baf7a", alpha=0.08, lw=0)
+        ax.axhline(floor, color="#1baf7a", lw=1, ls=(0, (3, 3)))
+        ax.axvline(step["max_vlm_call_ratio"], color="#1baf7a", lw=1, ls=(0, (3, 3)))
+        ax.text(0.01, floor + 0.005, f"success region: calls ≤ {step['max_vlm_call_ratio']:.0%}, "
+                f"accuracy ≥ ② {step['min_delta_acc_ci_low']:+.2f}", fontsize=7, color=INK_2, va="bottom")
+    for s, r in m["systems"].items():
+        x, y = r["vlm_calls"] / n, r["accuracy"]
+        lo, hi = r.get("accuracy_ci", [None, None])
+        if lo is not None:
+            ax.errorbar(x, y, yerr=[[y - lo], [hi - y]], fmt="none", ecolor=SYSTEM_COLOR[s], elinewidth=2, capsize=0)
+        ax.plot(x, y, "o", color=SYSTEM_COLOR[s], ms=9, mec="white", mew=1.5)
+        ax.annotate(f"{SYSTEM_TITLE[s]}\n{y:.3f}", (x, y), xytext=(8, -4), textcoords="offset points", fontsize=7.5,
+                    color=INK)
+    ax.set(xlim=(-0.03, 1.05), xlabel="share of boxes sent to the VLM", ylabel="accuracy (95% CI)")
+    ax.grid(color=GRID, lw=0.6)
+    p = m["primary"]
+    verdict = "; ".join(f"{e['name']}: {e['result']}" for e in m["endpoints"])
+    d = p.get("delta_acc") or {}
+    ax.set_title(f"Gate vs VLM: Δacc {_fmt(d.get('delta'), 3)} "
+                 f"[{_fmt(d.get('ci_low'), 3)}, {_fmt(d.get('ci_high'), 3)}], "
+                 f"calls {_fmt(p.get('call_ratio'))}   ({verdict})", loc="left", fontsize=9)
+
+
+def draw_need_vlm_levels(ax, by_level: dict):
+    """Jev error rate per need_vlm level, with box counts."""
+    levels = [lv for lv, v in by_level.items() if v["n"]]
+    errs = [by_level[lv]["jev_error"] for lv in levels]
+    ax.bar(levels, errs, color=PALETTE[0], width=0.6)
+    for lv, e in zip(levels, errs, strict=True):
+        ax.annotate(f"{e:.0%}\nn={by_level[lv]['n']}", (lv, e), ha="center", va="bottom", fontsize=7, color=INK_2,
+                    xytext=(0, 2), textcoords="offset points")
+    ax.set(ylim=(0, 1.1), xlabel="Jev need_vlm level (1 = no image check needed, 5 = must look)",
+           ylabel="Jev error rate")
+    ax.set_title("Jev's own need_vlm vs its actual error", loc="left", fontsize=10)
+
+
 def plot_run(run: RunDir) -> list[Path]:
-    """Write every figure for a run into plots/. Returns the written paths."""
-    m = run.read_json("metrics.json")
-    data = run.read_json("plots_data.json")
+    """Write fig1-fig4 (and the appendix when enabled) into figures/. Returns the written paths."""
+    m = run.read_json("metrics")
+    curves = m["curves"]
     cfg = run.config()
     classes, min_n = m["classes"], cfg["metrics"]["min_class_n"]
-    out = run.path / "plots"
+    out = run.path / "figures"
     out.mkdir(exist_ok=True)
     written = []
 
-    def save(fig, name):
-        fig.savefig(out / name, dpi=170, bbox_inches="tight", facecolor="white")
+    def save(fig, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=170, bbox_inches="tight", facecolor="white")
         plt.close(fig)
-        written.append(out / name)
+        written.append(path)
 
+    th = m.get("thresholds") or {}
+    primary = cfg["gate"]["primary"]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    draw_tradeoff(ax, m, cfg["endpoints"]["sequential"][0])
+    save(fig, out / "fig1_tradeoff.png")
+
+    if {"jev", "vlm"} <= set(curves["roc"]) and primary in m["systems"]:
+        save(main_figure(m, curves, classes, min_n, primary), out / "fig2_per_class.png")
+
+    if m.get("jev_self_knowledge") and "need_vlm" in curves["auto_curves"]:
+        fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+        draw_need_vlm_levels(axes[0], m["jev_self_knowledge"]["jev_error_by_need_vlm_level"])
+        draw_auto_curve(axes[1], curves["auto_curves"]["need_vlm"], th.get("tau_need_vlm"),
+                        "τ_e: send to the VLM when need_vlm ≥ τ_e", "Gate operating curve (τ_e fitted on dev)")
+        fig.tight_layout()
+        save(fig, out / "fig3_jev_knows.png")
+
+    rel = [s for s in ("jev", "vlm") if s in curves["reliability"]]
+    if rel:
+        fig, axes = plt.subplots(1, len(rel), figsize=(4.8 * len(rel), 4.3), squeeze=False)
+        for ax, s in zip(axes[0], rel, strict=True):
+            draw_reliability(ax, curves["reliability"][s], m["systems"][s]["ece"], SYSTEM_TITLE[s])
+        fig.tight_layout()
+        save(fig, out / "fig4_calibration.png")
+
+    if cfg["plots"]["appendix"]:
+        _appendix(m, curves, classes, min_n, out / "appendix", save)
+    return written
+
+
+def _appendix(m, curves, classes, min_n, out: Path, save) -> None:
+    """Per-system ROC, one-vs-rest 2x2 grids and confusion matrices."""
     n_tag = f"n = {m['n_box']}"
     for s, row in m["systems"].items():
         support = {c: row["per_class"][c]["support"] for c in classes}
-        if s in data["roc"]:
+        if s in curves["roc"]:
             fig, ax = plt.subplots(figsize=(5.2, 5))
-            draw_roc(ax, data["roc"][s], row["auc"], data["operating_points"][s], classes, min_n,
+            draw_roc(ax, curves["roc"][s], row["auc"], curves["operating_points"][s], classes, min_n,
                      f"{SYSTEM_TITLE[s]}   {n_tag}")
-            save(fig, f"roc_{s}.png")
+            save(fig, out / f"roc_{s}.png")
         fig = plt.figure(figsize=(9, 4.6))
         draw_2x2_grid(fig, row["ovr"], support, classes, min_n, f"{SYSTEM_TITLE[s]}   {n_tag}")
         fig.subplots_adjust(top=0.82, bottom=0.08, hspace=0.62, wspace=0.45)
-        save(fig, f"ovr_2x2_{s}.png")
+        save(fig, out / f"ovr_2x2_{s}.png")
         fig, ax = plt.subplots(figsize=(5.6, 5))
         draw_confusion(ax, row["confusion"], f"{SYSTEM_TITLE[s]}   acc {_fmt(row['accuracy'], 3)}")
-        save(fig, f"confusion_{s}.png")
-        if s in data["reliability"]:
-            fig, ax = plt.subplots(figsize=(4.6, 4.2))
-            draw_reliability(ax, data["reliability"][s], row["ece"], SYSTEM_TITLE[s])
-            save(fig, f"reliability_{s}.png")
-
-    th = m.get("thresholds") or {}
-    if data["auto_curves"]:
-        fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.6))
-        draw_auto_curve(axes[0], data["auto_curves"]["need_vlm"], th.get("tau_need_vlm"),
-                        "τ_e: send to VLM when need_vlm level ≥ τ_e", "Gate on Jev need_vlm (primary)")
-        draw_auto_curve(axes[1], data["auto_curves"]["confidence"], th.get("tau_conf"),
-                        "τ_c: send to VLM when Jev confidence < τ_c", "Gate on Jev confidence")
-        fig.tight_layout()
-        save(fig, "gate_curves.png")
-
-    primary = cfg["gate"]["primary"]
-    if {"jev", "vlm"} <= set(data["roc"]) and primary in m["systems"]:
-        save(main_figure(m, data, classes, min_n, primary), "figure_main.png")
-    return written
+        save(fig, out / f"confusion_{s}.png")
 
 
 def main_figure(m: dict, data: dict, classes: list[str], min_n: int, primary: str):

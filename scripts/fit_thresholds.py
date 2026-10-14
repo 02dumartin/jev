@@ -16,7 +16,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=REPO / "thresholds.yaml")
     args = ap.parse_args()
     run = RunDir(args.run_dir)
-    th = run.read_json("thresholds.json")
+    th = run.meta()["thresholds"]
     if th.get("fit_split") != "dev":
         raise SystemExit("refusing: thresholds were not fitted on dev")
     if th.get("max_frames"):

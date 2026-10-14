@@ -27,3 +27,14 @@ def test_rejects_bad_settings():
                 ["gate.primary=jev"], ["detector.phrase_to_class={fish: eel}"]):
         with pytest.raises(ConfigError):
             load_config(base, bad)
+
+
+def test_gt_source_drops_background_and_detector_baseline():
+    from jevgate.config import class_names
+
+    cfg = load_config(REPO / "configs" / "base.yaml")
+    assert cfg["candidates"]["source"] == "gt" and "background" not in class_names(cfg)
+    dino = load_config(REPO / "configs" / "dino.yaml")
+    assert class_names(dino)[-1] == "background" and "threshold" in dino["run"]["systems"]
+    with pytest.raises(ConfigError):
+        load_config(REPO / "configs" / "base.yaml", ["run.systems=[threshold, vlm, jev]"])

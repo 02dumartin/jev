@@ -1,4 +1,17 @@
-"""Run folders: naming (runs/<YYMMDD>_<name>), JSONL I/O, resolved config and git provenance."""
+"""Run folders: naming (runs/<YYMMDD>_<name>) and the fixed file layout of one run.
+
+runs/<run_id>/
+├── README.md         report (results, n flow, time and cost, what each figure shows)
+├── run.yaml          config + git + env + thresholds + stage times + usage
+├── frames.jsonl      one row per frame
+├── boxes.jsonl       one row per candidate box: position, (detector), truth y, Jev evidence
+├── judgments.jsonl   one row per box: every system's call
+├── metrics.json      every number, plus curve data for the figures
+├── errors.csv        boxes a main system got wrong
+├── cache/            expensive judge outputs (vlm.jsonl, jev.jsonl, jev_responses.jsonl, vlm_prompt.txt)
+├── figures/          fig1..fig4 (+ appendix/ when enabled)
+└── samples/          one comparison image per sampled frame
+"""
 
 import datetime as dt
 import json
@@ -7,12 +20,14 @@ from pathlib import Path
 
 import yaml
 
-STAGE_FILES = {
+FILES = {
     "frames": "frames.jsonl",
-    "candidates": "candidates.jsonl",
-    "labels": "labels.jsonl",
-    "evidence": "evidence.jsonl",
+    "boxes": "boxes.jsonl",
+    "judgments": "judgments.jsonl",
     "metrics": "metrics.json",
+    "errors": "errors.csv",
+    "report": "README.md",
+    "meta": "run.yaml",
 }
 
 
@@ -67,49 +82,62 @@ class RunDir:
 
     @classmethod
     def create(cls, cfg: dict, repo: Path) -> "RunDir":
-        """Make a fresh run folder and record the resolved config and git provenance."""
+        """Make a fresh run folder and start run.yaml with the resolved config and git provenance."""
         path = next_run_dir(repo / cfg["run"]["out_root"], cfg["run"]["name"])
         path.mkdir(parents=True)
         run = cls(path)
-        (path / "config.resolved.yaml").write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False))
-        info = git_info(repo) | {"time": dt.datetime.now().isoformat(timespec="seconds"), "run_id": path.name}
-        (path / "git.json").write_text(json.dumps(info, indent=2))
+        git = git_info(repo) | {"time": dt.datetime.now().isoformat(timespec="seconds")}
+        run.update_meta({"run_id": path.name, "git": git, "config": cfg})
         return run
 
     @property
     def run_id(self) -> str:
         return self.path.name
 
+    # run.yaml -----------------------------------------------------------------------------
+    def meta(self) -> dict:
+        p = self.file("meta")
+        return yaml.safe_load(p.read_text()) if p.exists() else {}
+
+    def update_meta(self, updates: dict) -> None:
+        """Merge top-level sections into run.yaml (dict sections merge one level deep)."""
+        meta = self.meta()
+        for key, value in updates.items():
+            if isinstance(value, dict) and isinstance(meta.get(key), dict) and key != "config":
+                meta[key] = meta[key] | value
+            else:
+                meta[key] = value
+        self.file("meta").write_text(yaml.safe_dump(meta, allow_unicode=True, sort_keys=False))
+
     def config(self) -> dict:
-        return yaml.safe_load((self.path / "config.resolved.yaml").read_text())
+        return self.meta()["config"]
 
     def git(self) -> dict:
-        return json.loads((self.path / "git.json").read_text())
+        return self.meta().get("git", {})
 
-    def file(self, stage: str) -> Path:
-        return self.path / STAGE_FILES[stage]
+    # files --------------------------------------------------------------------------------
+    def file(self, name: str) -> Path:
+        return self.path / FILES[name]
 
-    def decisions_file(self, system: str) -> Path:
-        return self.path / "decisions" / f"{system}.jsonl"
+    def cache_file(self, name: str) -> Path:
+        return self.path / "cache" / name
 
-    def write(self, stage: str, rows) -> int:
-        return write_jsonl(self.file(stage), rows)
+    def write(self, name: str, rows) -> int:
+        return write_jsonl(self.file(name), rows)
 
-    def read(self, stage: str) -> list[dict]:
-        return read_jsonl(self.file(stage))
-
-    def write_decisions(self, system: str, rows) -> int:
-        return write_jsonl(self.decisions_file(system), rows)
-
-    def read_decisions(self, system: str) -> list[dict]:
-        return read_jsonl(self.decisions_file(system))
-
-    def systems_done(self) -> list[str]:
-        folder = self.path / "decisions"
-        return sorted(p.stem for p in folder.glob("*.jsonl")) if folder.exists() else []
+    def read(self, name: str) -> list[dict]:
+        return read_jsonl(self.file(name))
 
     def write_json(self, name: str, obj) -> None:
-        (self.path / name).write_text(json.dumps(obj, indent=2, ensure_ascii=False))
+        self.file(name).write_text(json.dumps(obj, indent=2, ensure_ascii=False))
 
     def read_json(self, name: str):
-        return json.loads((self.path / name).read_text())
+        return json.loads(self.file(name).read_text())
+
+    def system_rows(self) -> dict[str, list[dict]]:
+        """judgments.jsonl as {system: [row per box in box order]} (cand_id included in each row)."""
+        out: dict[str, list[dict]] = {}
+        for j in self.read("judgments"):
+            for system, row in j["systems"].items():
+                out.setdefault(system, []).append({"cand_id": j["cand_id"], **row})
+        return out

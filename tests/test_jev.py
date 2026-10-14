@@ -1,5 +1,6 @@
 import pytest
 
+from jevgate.config import class_names
 from jevgate.judges.base import Budget, BudgetExceeded
 from jevgate.judges.jev import JevError, build_request, question_keys, validate_choice, validate_score
 
@@ -35,7 +36,7 @@ def test_request_has_class_and_need_vlm_per_box_and_hides_ids(cfg):
     assert "id-a" not in str(body["state"])
     q_class, q_need = question_keys("id-b")
     assert body["questions"][q_class]["type"] == "choice"
-    assert set(body["questions"][q_class]["criteria"]) == set(cfg["classes"])
+    assert set(body["questions"][q_class]["criteria"]) == set(class_names(cfg))
     assert body["questions"][q_need]["type"] == "score" and len(body["questions"][q_need]["criteria"]) == 5
 
 
@@ -56,7 +57,7 @@ def test_resume_reuses_identical_request_and_checkpoints(cfg, tmp_path, monkeypa
     group = [("id-a", _ev())]
     body = build_request(cfg, group)
     q_class, q_need = question_keys("id-a")
-    probs = dict.fromkeys(cfg["classes"], 0.0) | {"crab": 1.0}
+    probs = dict.fromkeys(class_names(cfg), 0.0) | {"crab": 1.0}
     response = {"model": "jev-x", "usage": {"input_tokens": 10, "output_tokens": 2},
                 "answers": {q_class: {"probabilities": probs, "confidence": 1.0},
                             q_need: {"score": 0.0, "probabilities": {"0": 1.0}}}}

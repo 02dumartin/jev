@@ -9,7 +9,7 @@ import time
 import torch
 from PIL import Image, ImageDraw
 
-from ..config import class_names
+from ..config import class_defs, class_names
 from ..data import image_path
 from .base import Budget, Judge, decision
 
@@ -53,7 +53,7 @@ class VLMJudge(Judge):
         self.classes = class_names(cfg)
         self.letters = LETTERS[: len(self.classes)]
         self.letter_ids = [tok.encode(letter, add_special_tokens=False)[0] for letter in self.letters]
-        options = "\n".join(f"{letter}. {c}: {cfg['classes'][c]}" for letter, c in zip(self.letters, self.classes,
+        options = "\n".join(f"{letter}. {c}: {class_defs(cfg)[c]}" for letter, c in zip(self.letters, self.classes,
                                                                                    strict=True))
         self.prompt = (
             f"{cfg['prompts']['context']}\n"
@@ -67,7 +67,7 @@ class VLMJudge(Judge):
     def _prompt(self, cand: dict) -> str:
         """Prompt for one box; with show_detector_hint the detector's class and score are stated."""
         hint = (f"Detector proposal for this box: {cand['dino_label']} (score {cand['dino_score']:.2f}).\n"
-                if self.vcfg.get("show_detector_hint") else "")
+                if self.vcfg.get("show_detector_hint") and cand.get("dino_label") else "")
         return self.prompt.replace("{hint}", hint)
 
     def _inputs(self, items):

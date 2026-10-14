@@ -1,4 +1,4 @@
-"""S0-S8 orchestration. Each stage writes into the run folder; the next stage reads only those files."""
+"""S0-S8 orchestration for one config. The run folder layout is fixed in runio.py."""
 
 import platform
 import shutil
@@ -10,22 +10,22 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-from . import plots, viz
+from . import plots, report, viz
 from .config import class_names
-from .data import available_frames, build_frames, context_frames, load_gt
-from .detect import DetectionCache
-from .evaluate import evaluate_run, metrics_markdown
+from .data import BrackishGT, available_frames, build_frames, context_frames, frame_file, load_gt
+from .evaluate import evaluate_run
 from .evidence import build_evidence
 from .gate import GATES, combine, fit_detector_threshold, fit_gate_thresholds
 from .judges.base import Budget
 from .judges.threshold import ThresholdJudge
-from .label import detector_coverage, label_candidates, label_summary, summary_markdown
-from .runio import RunDir
+from .label import detector_coverage, label_candidates, label_summary
+from .runio import RunDir, read_jsonl, write_jsonl
 
 # Config sections a reused judge output depends on. Reuse is refused when any of them differ.
 REUSE_DEPENDS = {
-    "vlm": ["data", "splits", "run.split", "run.max_frames", "classes", "detector", "vlm", "prompts"],
-    "jev": ["data", "splits", "run.split", "run.max_frames", "classes", "detector", "evidence", "jev", "prompts"],
+    "vlm": ["data", "splits", "run.split", "run.max_frames", "candidates", "classes", "detector", "vlm", "prompts"],
+    "jev": ["data", "splits", "run.split", "run.max_frames", "candidates", "classes", "detector", "evidence", "jev",
+            "prompts"],
 }
 
 
@@ -41,33 +41,52 @@ def _section(cfg: dict, dotted: str):
 
 
 def env_info(cfg: dict) -> dict:
-    """Package versions and GPU, for env.json."""
+    """Package versions, GPU and model names for run.yaml."""
     import torch
     import transformers
 
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
-    return {"python": platform.python_version(), "torch": torch.__version__, "transformers": transformers.__version__,
-            "gpu": gpu, "detector_model": cfg["detector"]["model"], "vlm_model": cfg["vlm"]["model"],
-            "jev_model_requested": cfg["jev"]["model"]}
+    return {"python": platform.python_version(), "torch": str(torch.__version__),
+            "transformers": str(transformers.__version__), "gpu": gpu, "vlm_model": cfg["vlm"]["model"],
+            "jev_model_requested": cfg["jev"]["model"],
+            "detector_model": cfg["detector"]["model"] if cfg["candidates"]["source"] == "dino" else None}
 
 
-def resolve_thresholds(cfg: dict, run: RunDir, labels: list[dict], cands: list[dict], jev_rows) -> dict:
-    """Dev: fit t, tau_need_vlm and tau_conf on this run. Test: load the dev-fitted file, refuse anything else."""
+def gt_candidates(gt: BrackishGT, keys) -> list[dict]:
+    """GT boxes as candidates (no detector fields). Ordered by (clip, frame, AAU row order)."""
+    out = []
+    for clip, idx in keys:
+        for k, g in enumerate(gt.frame_boxes(frame_file(clip, idx))):
+            out.append({"cand_id": f"{clip[-25:]}-{idx:04d}-g{k:02d}", "clip": clip, "frame_idx": idx,
+                        "box_xyxy": [round(v, 1) for v in g.box_xyxy], "gt_label": g.label,
+                        "gt_object_id": g.object_id})
+    return out
+
+
+def gt_labels(cands: list[dict]) -> list[dict]:
+    """S3 for GT candidates: the truth is the box's own AAU class."""
+    return [{"cand_id": c["cand_id"], "max_iou": 1.0, "y": c["gt_label"], "matched_object_id": c["gt_object_id"],
+             "matched_gt_label": c["gt_label"], "scored": True} for c in cands]
+
+
+def resolve_thresholds(cfg: dict, run: RunDir, boxes: list[dict], jev_rows) -> dict:
+    """Dev: fit thresholds on this run. Test: load the dev-fitted file and refuse anything inconsistent."""
+    source = cfg["candidates"]["source"]
     if cfg["run"]["split"] == "test":
         th = yaml.safe_load(Path(cfg["thresholds_file"]).read_text())
-        if th.get("fit_split") != "dev" or th.get("fit_splits") != cfg["splits"]["dev"] or th.get("max_frames"):
-            raise ValueError("thresholds_file was not fitted on the full dev split; refusing test run")
+        if (th.get("fit_split") != "dev" or th.get("fit_splits") != cfg["splits"]["dev"] or th.get("max_frames")
+                or th.get("candidate_source") != source):
+            raise ValueError("thresholds_file was not fitted on the full dev split with the same candidate source")
         return th
-    scored = [(c, r["y"]) for c, r in zip(cands, labels, strict=True) if r["scored"]]
-    th = {
-        "t": fit_detector_threshold([y for _, y in scored], [c["dino_label"] for c, _ in scored],
-                                    [c["dino_score"] for c, _ in scored]),
-        "fit_split": "dev", "fit_splits": cfg["splits"]["dev"], "fit_run": run.run_id,
-        "fit_commit": run.git().get("commit"), "max_frames": cfg["run"].get("max_frames"),
-    }
+    scored = [b for b in boxes if b["scored"]]
+    th = {"fit_split": "dev", "fit_splits": cfg["splits"]["dev"], "candidate_source": source, "fit_run": run.run_id,
+          "fit_commit": run.git().get("commit"), "max_frames": cfg["run"].get("max_frames")}
+    if source == "dino":
+        th["t"] = fit_detector_threshold([b["y"] for b in scored], [b["dino_label"] for b in scored],
+                                         [b["dino_score"] for b in scored])
     if jev_rows is not None:
         jev = {r["cand_id"]: r for r in jev_rows}
-        th |= fit_gate_thresholds([y for _, y in scored], [jev[c["cand_id"]] for c, _ in scored], cfg)
+        th |= fit_gate_thresholds([b["y"] for b in scored], [jev[b["cand_id"]] for b in scored], cfg)
     return th
 
 
@@ -82,151 +101,150 @@ class Pipeline:
         self.resume_jev = resume_jev or []
         self.systems = cfg["run"]["systems"]
         self.budget = Budget(cfg)
+        self.timing: dict[str, float] = {}
         load_dotenv(repo / ".env")
 
-    def _record_time(self, run: RunDir, name: str, seconds: float) -> None:
-        timing = run.read_json("timing.json") if (run.path / "timing.json").exists() else {}
-        run.write_json("timing.json", timing | {name: round(seconds, 3)})
-
-    def _timed(self, run: RunDir, name: str, fn):
+    def _timed(self, name: str, fn):
         started = time.perf_counter()
         out = fn()
-        self._record_time(run, name, time.perf_counter() - started)
+        self.timing[name] = round(time.perf_counter() - started, 3)
         return out
+
+    # S2 ------------------------------------------------------------------------------------
+    def _candidates(self, frames, gt, ctx):
+        """(target candidates, context candidates, detect ms per target frame)."""
+        targets = [(f["clip"], f["frame_idx"]) for f in frames]
+        if self.cfg["candidates"]["source"] == "gt":
+            return gt_candidates(gt, targets), gt_candidates(gt, ctx), {}
+        from .detect import DetectionCache
+
+        cache = DetectionCache(self.cfg, self.repo)
+        todo = cache.missing(ctx)
+        log(f"S2 DINO: {len(ctx)} frames needed ({len(frames)} target + context), {len(todo)} not cached")
+        if todo:
+            from .detect import GroundingDinoDetector
+
+            detector = self._timed("detect_load", partial(GroundingDinoDetector, self.cfg))
+            cache.add(self._timed("detect", partial(detector.detect_frames, self.cfg, todo, log)))
+            del detector
+            _free_gpu()
+        return cache.candidates(targets), cache.candidates(ctx), cache.detect_ms(targets)
 
     def run(self) -> RunDir:
         cfg = self.cfg
         classes = class_names(cfg)
+        source = cfg["candidates"]["source"]
         run = RunDir.create(cfg, self.repo)
-        run.write_json("env.json", env_info(cfg))
+        run.update_meta({"env": env_info(cfg)})
         log(f"run folder: {run.path}")
         gt = load_gt(cfg)
 
-        # S1 frames
+        # S1-S2 frames and candidate boxes (target frames + previous K frames as causal context)
         frames = build_frames(cfg, gt)
-        run.write("frames", frames)
-        log(f"S1 frames: {len(frames)} ({dict(Counter(f['gt_status'] for f in frames))})")
-
-        # S2 detect (target frames + previous K frames as causal context), cached per frame
         ctx = context_frames(frames, cfg["evidence"]["history_frames"], available_frames(cfg))
-        cache = DetectionCache(cfg, self.repo)
-        todo = cache.missing(ctx)
-        log(f"S2 DINO: {len(ctx)} frames needed ({len(frames)} target + context), {len(todo)} not cached")
-        if todo:
-            started = time.perf_counter()
-            from .detect import GroundingDinoDetector
+        cands, ctx_cands, detect_ms = self._candidates(frames, gt, ctx)
+        for f in frames:
+            f["detect_ms"] = detect_ms.get((f["clip"], f["frame_idx"]))
+        run.write("frames", frames)
+        log(f"S1-S2 frames {len(frames)} ({dict(Counter(f['gt_status'] for f in frames))}), "
+            f"candidates {len(cands)} from {source}")
 
-            detector = GroundingDinoDetector(cfg)
-            self._record_time(run, "detect_load", time.perf_counter() - started)
-            cache.add(self._timed(run, "detect", lambda: detector.detect_frames(cfg, todo, log)))
-            del detector
-            _free_gpu()
-        targets = [(f["clip"], f["frame_idx"]) for f in frames]
-        cands = cache.candidates(targets)
-        run.write("candidates", cands)
-        run.write_json("detect_ms.json", [{"clip": c, "frame_idx": i, "detect_ms": ms}
-                                          for (c, i), ms in cache.detect_ms(targets).items()])
-        per_frame = Counter((c["clip"], c["frame_idx"]) for c in cands)
-        run.write_json("detect_summary.json", {
-            "target_frames": len(frames), "context_frames": len(ctx), "candidates": len(cands),
-            "candidates_per_frame_hist": dict(sorted(Counter(per_frame.get(k, 0) for k in targets).items())),
-            "dino_label_counts": dict(Counter(c["dino_label"] for c in cands)),
-            "score_hist": dict(Counter(round(c["dino_score"], 1) for c in cands)),
-            "cache_file": str(cache.path.relative_to(self.repo)),
-        })
-        log(f"S2 candidates: {len(cands)}")
-
-        # S3 labels
-        labels = label_candidates(cands, frames, gt, cfg)
-        run.write("labels", labels)
+        # S3-S4 truth and evidence -> boxes.jsonl
+        labels = gt_labels(cands) if source == "gt" else label_candidates(cands, frames, gt, cfg)
+        evidence = build_evidence(cands, ctx_cands, ctx, cfg)
+        file_of = {(f["clip"], f["frame_idx"]): f["file"] for f in frames}
+        boxes = [{**{k: v for k, v in c.items() if k not in ("gt_label", "gt_object_id")},
+                  "file": file_of[(c["clip"], c["frame_idx"])],
+                  **{k: v for k, v in lab.items() if k != "cand_id"},
+                  "evidence": {k: v for k, v in ev.items() if k != "cand_id"}}
+                 for c, lab, ev in zip(cands, labels, evidence, strict=True)]
+        run.write("boxes", boxes)
         coverage = detector_coverage(cands, frames, gt, cfg["label"]["match_iou"], classes)
-        summary = label_summary(cands, labels, coverage, classes)
-        run.write_json("label_summary.json", summary)
-        (run.path / "label_summary.md").write_text(summary_markdown(summary, classes))
-        log(f"S3 labels: {summary['y_per_class']}, ambiguous {summary['ambiguous']}; "
-            f"DINO recall upper bound {coverage['recall_upper_bound']:.3f}")
+        n_flow = label_summary(cands, labels, coverage, classes)
+        log(f"S3 y: {n_flow['y_per_class']}, ambiguous {n_flow['ambiguous']}, "
+            f"recall upper bound {coverage['recall_upper_bound']:.3f}")
 
-        # S4 evidence
-        evidence = build_evidence(cands, cache.candidates(ctx), ctx, cfg)
-        run.write("evidence", evidence)
-        log(f"S4 evidence: {len(evidence)}")
-
-        # S5 judges
+        # S5 judges (expensive outputs go to cache/)
         jev_rows = self._judge_jev(run, frames, cands, evidence) if "jev" in self.systems else None
-        if "vlm" in self.systems:
-            self._judge_vlm(run, frames, cands, evidence)
-        run.write_json("usage.json", self.budget.summary())
+        vlm_rows = self._judge_vlm(run, frames, cands, evidence) if "vlm" in self.systems else None
 
-        th = resolve_thresholds(cfg, run, labels, cands, jev_rows)
-        run.write_json("thresholds.json", th)
-        if cfg["run"]["split"] == "dev":
-            (run.path / "thresholds.yaml").write_text(yaml.safe_dump(th, sort_keys=False))
+        # S6 thresholds and cheap systems
+        th = resolve_thresholds(cfg, run, boxes, jev_rows)
+        run.update_meta({"thresholds": th})
         log("thresholds: " + ", ".join(f"{k}={v}" for k, v in th.items() if k == "t" or k.startswith("tau")))
+        rows = {}
         if "threshold" in self.systems:
-            threshold = ThresholdJudge(th["t"], classes, {})
-            run.write_decisions("threshold", self._timed(run, "threshold",
-                                                         partial(threshold.judge, frames, cands, evidence)))
+            rows["threshold"] = self._timed("threshold", partial(ThresholdJudge(th["t"], classes, {}).judge,
+                                                                 frames, cands, evidence))
+        if vlm_rows is not None:
+            rows["vlm"] = vlm_rows
+        if jev_rows is not None:
+            rows["jev"] = jev_rows
         for g in GATES:
             if g in self.systems:
-                run.write_decisions(g, combine(g, jev_rows, run.read_decisions("vlm"), th))
-        log(f"S5-S6 decisions: {run.systems_done()}")
+                rows[g] = combine(g, jev_rows, vlm_rows, th)
+        by_sys = {s: {r["cand_id"]: {k: v for k, v in r.items() if k != "cand_id"} for r in rs}
+                  for s, rs in rows.items()}
+        run.write("judgments", ({"cand_id": c["cand_id"], "systems": {s: by_sys[s][c["cand_id"]] for s in rows}}
+                                for c in cands))
+        run.update_meta({"timing_s": self.timing, "usage": self.budget.summary()})
 
         # S7 evaluation
-        gt_count = {(f["clip"], f["frame_idx"]): len(gt.frame_boxes(f["file"])) for f in frames}
-        metrics = self._timed(run, "evaluate", lambda: evaluate_run(run, gt_count, summary))
-        metrics["budget_used"] = self.budget.summary()
-        run.write_json("metrics.json", metrics)
-        (run.path / "metrics.md").write_text(metrics_markdown(metrics))
+        metrics = self._timed("evaluate", partial(evaluate_run, run, n_flow))
+        run.update_meta({"timing_s": self.timing})
+        run.write_json("metrics", metrics)
         log("S7 metrics written")
 
-        # S8 figures and overlays
-        plots.plot_run(run)
+        # S8 figures, samples, README
+        figures = plots.plot_run(run)
         viz.render_samples(run, gt, cfg["viz"]["sample_frames"], cfg["viz"]["seed"])
-        log("S8 plots and overlays written")
+        run.file("report").write_text(report.render(run, metrics, figures))
+        log("S8 figures, samples and README written")
         return run
 
-    def _reuse(self, run: RunDir, what: str) -> None:
+    # S5 helpers ------------------------------------------------------------------------------
+    def _reuse(self, run: RunDir, what: str) -> list[dict]:
         source = self.reuse[what]
         diffs = [k for k in REUSE_DEPENDS[what] if _section(self.cfg, k) != _section(source.config(), k)]
         if diffs:
             raise ValueError(f"cannot reuse {what} from {source.run_id}: config differs in {diffs}")
-        run.decisions_file(what).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(source.decisions_file(what), run.decisions_file(what))
-        old = source.read_json("timing.json") if (source.path / "timing.json").exists() else {}
+        run.cache_file(f"{what}.jsonl").parent.mkdir(exist_ok=True)
+        shutil.copy(source.cache_file(f"{what}.jsonl"), run.cache_file(f"{what}.jsonl"))
+        old = source.meta().get("timing_s", {})
         if what in old:
-            self._record_time(run, what, old[what])
+            self.timing[what] = old[what]
         log(f"reused {what} from {source.run_id}")
+        return read_jsonl(run.cache_file(f"{what}.jsonl"))
 
-    def _judge_jev(self, run, frames, cands, evidence):
+    def _judge_jev(self, run, frames, cands, evidence) -> list[dict]:
         if "jev" in self.reuse:
-            self._reuse(run, "jev")
-        else:
-            from .judges.jev import JevJudge
+            return self._reuse(run, "jev")
+        from .judges.jev import JevJudge
 
-            checkpoint = run.path / "raw" / "jev_responses.jsonl"
-            checkpoint.parent.mkdir(exist_ok=True)
-            judge = JevJudge(self.cfg, self.budget, log, checkpoint=checkpoint, resume=self.resume_jev)
-            if judge.stored:
-                log(f"S5 jev: {len(judge.stored)} stored responses available from {len(self.resume_jev)} file(s)")
-            run.write_decisions("jev", self._timed(run, "jev", partial(judge.judge, frames, cands, evidence)))
-            log(f"S5 jev: {self.budget.jev_requests} new requests, {self.budget.jev_tokens} tokens")
-        return run.read_decisions("jev")
+        checkpoint = run.cache_file("jev_responses.jsonl")
+        checkpoint.parent.mkdir(exist_ok=True)
+        judge = JevJudge(self.cfg, self.budget, log, checkpoint=checkpoint, resume=self.resume_jev)
+        if judge.stored:
+            log(f"S5 jev: {len(judge.stored)} stored responses available")
+        rows = self._timed("jev", partial(judge.judge, frames, cands, evidence))
+        write_jsonl(run.cache_file("jev.jsonl"), rows)
+        log(f"S5 jev: {self.budget.jev_requests} new requests, {self.budget.jev_tokens} tokens")
+        return rows
 
-    def _judge_vlm(self, run, frames, cands, evidence):
+    def _judge_vlm(self, run, frames, cands, evidence) -> list[dict]:
         if "vlm" in self.reuse:
-            self._reuse(run, "vlm")
-            return
+            return self._reuse(run, "vlm")
         from .judges.vlm import VLMJudge
 
-        started = time.perf_counter()
-        judge = VLMJudge(self.cfg, self.budget, log)
-        self._record_time(run, "vlm_load", time.perf_counter() - started)
-        (run.path / "raw").mkdir(exist_ok=True)
-        (run.path / "raw" / "vlm_prompt.txt").write_text(judge.prompt)
-        run.write_decisions("vlm", self._timed(run, "vlm", partial(judge.judge, frames, cands, evidence)))
+        judge = self._timed("vlm_load", partial(VLMJudge, self.cfg, self.budget, log))
+        run.cache_file("vlm_prompt.txt").parent.mkdir(exist_ok=True)
+        run.cache_file("vlm_prompt.txt").write_text(judge.prompt)
+        rows = self._timed("vlm", partial(judge.judge, frames, cands, evidence))
+        write_jsonl(run.cache_file("vlm.jsonl"), rows)
         log(f"S5 vlm: {self.budget.vlm_calls} calls")
         del judge
         _free_gpu()
+        return rows
 
 
 def _free_gpu() -> None:

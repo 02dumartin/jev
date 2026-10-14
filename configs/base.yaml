@@ -6,7 +6,7 @@ run:
   out_root: runs
   split: dev                # dev = original train + valid frames, test = original test frames
   max_frames: null          # null = every frame of the split; smoke takes this many, evenly spaced
-  systems: [threshold, vlm, jev, gate, gate_conf, gate_either]
+  systems: [vlm, jev, gate, gate_conf, gate_either]   # configs/dino.yaml adds threshold (①)
   cache_root: runs/_cache   # detector outputs shared across runs (keyed by detector + data config)
 
 data:
@@ -22,6 +22,10 @@ data:
 splits:
   dev: [train.txt, valid.txt]
   test: [test.txt]
+
+# Where candidate boxes come from: gt (AAU boxes; 6-way, no background, no ①) | dino (configs/dino.yaml)
+candidates:
+  source: gt
 
 # Judgment classes. The first six are the AAU tags; background = no animal in the box.
 # The same descriptions go to the VLM (options A-G) and to Jev (choice criteria).
@@ -57,12 +61,10 @@ evidence:
 
 prompts:
   context: >-
-    Fixed underwater camera in turbid brackish water (960x540 video). A zero-shot object detector,
-    run with a low score threshold, proposed candidate boxes, so many candidates contain no animal
-    (turbidity, particles, bubbles, seabed texture, camera frame). Real animals are often faint,
-    blurry or cut off at the frame border: fish and small fish in the water column, crabs, shrimp
-    and starfish on or near the seabed, jellyfish drifting. Each candidate shows the detector's
-    proposed class and score; the detector's class can be wrong.
+    Fixed underwater camera in turbid brackish water (960x540 video). Each candidate box marks one
+    animal that a person annotated; decide which animal it is. Animals are often faint, blurry or
+    cut off at the frame border: fish and small fish in the water column, crabs, shrimp and starfish
+    on or near the seabed, jellyfish drifting.
   question: "What is inside this candidate box?"
   need_vlm_question: >-
     How much would looking at the image itself be needed to be sure of the class of this candidate
@@ -118,8 +120,11 @@ endpoints:
     - {name: stricter_acc, min_delta_acc_ci_low: -0.01, max_vlm_call_ratio: 0.5}
     - {name: stricter_calls, min_delta_acc_ci_low: -0.01, max_vlm_call_ratio: 0.3}
 
+plots:
+  appendix: false            # true -> figures/appendix/ with per-system ROC, 2x2 grids, confusion matrices
+
 viz:
-  sample_frames: 12          # random frames rendered as per-system overlays
+  sample_frames: 12          # random frames rendered as one comparison image each (samples/)
   seed: 0
 
 budget:

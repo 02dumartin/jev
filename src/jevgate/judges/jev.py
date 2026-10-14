@@ -17,7 +17,7 @@ from pathlib import Path
 
 import httpx
 
-from ..config import class_names
+from ..config import class_defs, class_names
 from .base import Budget, Judge, decision
 
 RETRY_STATUS = {408, 429, 499, 529}  # plus every 5xx
@@ -29,7 +29,8 @@ class JevError(RuntimeError):
 
 def box_view(ev: dict) -> dict:
     """The part of an evidence row that Jev sees (no ids, no frame indices)."""
-    return {"detector": ev["detector"], "geometry": ev["geometry"], "track": ev["track"]}
+    view = {"geometry": ev["geometry"], "track": ev["track"]}
+    return {"detector": ev["detector"], **view} if "detector" in ev else view
 
 
 def validate_choice(answer: dict, classes: list[str]) -> dict[str, float]:
@@ -75,7 +76,7 @@ def build_request(cfg: dict, boxes: list[tuple[str, dict]]) -> dict:
     p = cfg["prompts"]
     names = {cid: f"B{k + 1}" for k, (cid, _) in enumerate(boxes)}
     levels = list(p["need_vlm_levels"])
-    state = {"context": p["context"], "class_definitions": dict(cfg["classes"]), "need_vlm_scale": levels,
+    state = {"context": p["context"], "class_definitions": class_defs(cfg), "need_vlm_scale": levels,
              "candidates_in_frame": len(boxes), "candidate_boxes": {names[cid]: box_view(ev) for cid, ev in boxes}}
     questions = {}
     for cid, _ in boxes:
@@ -84,7 +85,7 @@ def build_request(cfg: dict, boxes: list[tuple[str, dict]]) -> dict:
         questions[q_class] = {"type": "choice",
                               "instructions": {"question": p["question"], "target": target,
                                                "options": "defined in `class_definitions`"},
-                              "criteria": dict.fromkeys(cfg["classes"])}
+                              "criteria": dict.fromkeys(class_names(cfg))}
         questions[q_need] = {"type": "score",
                              "instructions": {"question": p["need_vlm_question"], "target": target,
                                               "levels": "defined in `need_vlm_scale`"},

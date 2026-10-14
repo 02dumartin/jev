@@ -10,7 +10,7 @@ import yaml
 REQUIRED_KEYS = [
     "run.name", "run.out_root", "run.split", "run.systems", "run.cache_root",
     "data.root", "data.images_dir", "data.aau_csvs", "data.frame_wh",
-    "splits.dev", "splits.test", "classes",
+    "splits.dev", "splits.test", "classes", "candidates.source",
     "detector.model", "detector.prompt", "detector.phrase_to_class", "detector.box_threshold", "detector.nms_iou",
     "label.match_iou", "label.background_iou",
     "evidence.history_frames", "evidence.match_iou",
@@ -101,6 +101,10 @@ def validate(cfg: dict) -> None:
         raise ConfigError(f"gate.primary must be one of {sorted(GATE_SYSTEMS)}")
     if BACKGROUND not in cfg["classes"]:
         raise ConfigError("classes must include 'background'")
+    if cfg["candidates"]["source"] not in ("dino", "gt"):
+        raise ConfigError("candidates.source must be 'dino' or 'gt'")
+    if cfg["candidates"]["source"] == "gt" and "threshold" in systems:
+        raise ConfigError("the detector baseline needs DINO scores; remove 'threshold' when candidates.source=gt")
     unmapped = set(cfg["detector"]["phrase_to_class"].values()) - set(cfg["classes"])
     if unmapped:
         raise ConfigError(f"detector.phrase_to_class maps to unknown classes: {sorted(unmapped)}")
@@ -116,8 +120,13 @@ def validate(cfg: dict) -> None:
 
 
 def class_names(cfg: dict) -> list[str]:
-    """Ordered judgment classes (six animals, then background)."""
-    return list(cfg["classes"])
+    """Ordered judgment classes: six animals, then background (dropped for GT boxes, which are all animals)."""
+    return [c for c in cfg["classes"] if not (c == BACKGROUND and cfg["candidates"]["source"] == "gt")]
+
+
+def class_defs(cfg: dict) -> dict[str, str]:
+    """Descriptions of the judgment classes, shared by the VLM options and Jev's class definitions."""
+    return {c: cfg["classes"][c] for c in class_names(cfg)}
 
 
 def load_config(path: str | Path, overrides: list[str] | None = None) -> dict:
