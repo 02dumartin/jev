@@ -9,6 +9,8 @@ video_split:
   seed: 0
 
 yolo:
+  split_source: video               # video: splits/video_split.yaml | original: the dataset's frame-level random lists
+  original_lists: {train: train.txt, val: valid.txt, test: test.txt}   # used when split_source = original
   dataset_dir: data/yolo_brackish   # images are symlinks; labels converted from AAU (class 0-5, normalised xywh)
   model: yolo12s.pt                 # COCO-pretrained weights, Ultralytics default training settings below
   project: train                    # training outputs: train/<name>/ (weights, results.csv, plots)
@@ -19,3 +21,6 @@ yolo:
   device: 4
   seed: 0
   workers: 8
+  patience: 100                     # Ultralytics default (no early stop within 100 epochs)
+  freeze: null                      # number of leading layers kept frozen; null = train everything
+  note: ""

@@ -28,14 +28,29 @@ def yolo_lines(boxes, classes: list[str], wh) -> list[str]:
     return out
 
 
+def frame_assignment(cfg: dict, repo: Path) -> dict[str, str]:
+    """frame file -> train/val/test, from `yolo.split_source`.
+
+    video:    whole videos assigned by splits/video_split.yaml (no video in two splits).
+    original: the dataset's own frame-level random lists (yolo.original_lists), as in Pedersen et al. 2019.
+    """
+    source = cfg["yolo"]["split_source"]
+    if source == "video":
+        videos = {v: s for s, vids in load_split(repo / cfg["video_split"]["file"]).items() for v in vids}
+        return {f: videos[parse_frame_name(f)[0]] for f in listed_frames(cfg)}
+    if source == "original":
+        root = Path(cfg["data"]["root"])
+        return {line.strip(): split for split, rel in cfg["yolo"]["original_lists"].items()
+                for line in (root / rel).open() if line.strip()}
+    raise ValueError(f"unknown yolo.split_source: {source}")
+
+
 def build_dataset(cfg: dict, gt: BrackishGT, repo: Path) -> dict:
     """images/<split>/ (symlinks) + labels/<split>/*.txt + data.yaml. Returns per-split counts."""
     root = repo / cfg["yolo"]["dataset_dir"]
     classes = detector_classes(cfg)
-    videos = {v: s for s, vids in load_split(repo / cfg["video_split"]["file"]).items() for v in vids}
     counts = {s: {"frames": 0, "empty_frames": 0, "boxes": 0} for s in SPLITS}
-    for f in listed_frames(cfg):
-        split = videos[parse_frame_name(f)[0]]
+    for f, split in sorted(frame_assignment(cfg, repo).items()):
         img_dir, lbl_dir = root / "images" / split, root / "labels" / split
         img_dir.mkdir(parents=True, exist_ok=True)
         lbl_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +76,7 @@ def train(cfg: dict, repo: Path):
     model = YOLO(y["model"])
     return model.train(data=str(repo / y["dataset_dir"] / "data.yaml"), epochs=y["epochs"], imgsz=y["imgsz"],
                        batch=y["batch"], device=y["device"], seed=y["seed"], workers=y["workers"],
+                       patience=y["patience"], freeze=y["freeze"],
                        project=str(repo / y["project"]), name=y["name"], exist_ok=False)
 
 
@@ -113,15 +129,16 @@ def evaluate_split(cfg: dict, repo: Path, split: str, weights: Path) -> dict:
             "speed_ms_per_image": {k: float(v) for k, v in res.speed.items()}}
 
 
-def training_report(run_dir: Path, conv: dict, evals: list[dict], counts: dict | None = None) -> str:
+def training_report(cfg: dict, run_dir: Path, conv: dict, evals: list[dict]) -> str:
     """train/<name>/README.md: convergence, per-split detector metrics, and a guide to the files."""
     def f(v):
         return f"{v:.3f}"
 
     train_trend = ", ".join(f"{k.split('/')[1]} {v}" for k, v in conv["train_loss_trend"].items())
     lines = [f"# {run_dir.name}", "",
-             "YOLO12s, COCO-pretrained, Ultralytics default settings, trained on the video-level split "
-             "(`splits/video_split.yaml`).", "",
+             f"YOLO12s, COCO-pretrained, split `{cfg['yolo']['split_source']}`, imgsz {cfg['yolo']['imgsz']}, "
+             f"freeze {cfg['yolo']['freeze']}, epochs {cfg['yolo']['epochs']} (patience {cfg['yolo']['patience']}). "
+             f"{cfg['yolo'].get('note', '')}", "",
              "## Convergence", "",
              f"- epochs {conv['epochs_done']}, best epoch **{conv['best_epoch']}** "
              f"(val mAP50-95 {f(conv['best_map50_95'])}), "

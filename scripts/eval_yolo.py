@@ -19,7 +19,7 @@ def main() -> None:
     run_dir = REPO / cfg["yolo"]["project"] / cfg["yolo"]["name"]
     evals = [evaluate_split(cfg, REPO, s, run_dir / "weights" / "best.pt") for s in args.splits]
     (run_dir / "eval.json").write_text(json.dumps(evals, indent=2))
-    (run_dir / "README.md").write_text(training_report(run_dir, convergence(read_results(run_dir)), evals))
+    (run_dir / "README.md").write_text(training_report(cfg, run_dir, convergence(read_results(run_dir)), evals))
     for e in evals:
         print(f"{e['split']}: mAP50 {e['map50']:.3f} mAP50-95 {e['map50_95']:.3f}")
 

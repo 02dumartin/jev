@@ -1,0 +1,9 @@
+# The Pedersen et al. 2019 training setting on the video-level split: does the setting help on unseen videos?
+inherit: yolo.yaml
+
+yolo:
+  imgsz: 416
+  freeze: 9
+  name: yolo12s_video_paper416
+  device: 6
+  note: "Pedersen et al. 2019 setting (416 input, backbone frozen) on the video-level split."
