@@ -263,25 +263,23 @@ runs/261014_dev/
 
 ```
 jev-gate/
-├── configs/            base.yaml, smoke.yaml, test.yaml
-├── src/jevgate/
-│   ├── config.py       YAML 로드·상속·검증
-│   ├── runio.py        run 폴더, JSONL 입출력, git·env 기록
-│   ├── boxes.py        IoU, NMS, clip
-│   ├── data.py         클립·프레임·AAU GT
-│   ├── detect.py       S2 Grounding DINO
-│   ├── label.py        S3 IoU 매칭 → y, 개수 흐름표
-│   ├── evidence.py     S4 인과적 특징
-│   ├── judges/         base.py, threshold.py, vlm.py, jev.py (S5)
-│   ├── gate.py         S6
-│   ├── metrics.py      S7 정확도·F1·ECE·Brier·AUC·bootstrap·endpoint
-│   ├── plots.py        S7 그림
-│   ├── viz.py          S8 overlay·영상·index.html
-│   └── contracts.py    단계별 스키마 검사
-├── scripts/            run_pipeline.py, fit_thresholds.py, check_contracts.py,
-│                       compare_metrics.py, config_guard.py, render_samples.py
-├── tests/   docs/PLAN.md   metrics_history.jsonl
-└── data/ runs/ .env    (gitignore)
+├── configs/        base.yaml (GT 박스), dino.yaml, yolo.yaml, smoke.yaml, test.yaml
+├── splits/         video_split.yaml (영상 단위 분할, 고정)
+├── scripts/        실행 진입점: run_pipeline, fit_thresholds, check_contracts, compare_metrics, config_guard,
+│                   make_plots, render_samples, make_video_split, prepare_yolo, train_yolo, yolo_progress
+├── src/
+│   ├── jevgate/
+│   │   ├── pipeline.py   S0–S8 실행 순서
+│   │   ├── core/         config.py (YAML 로드·검증), runio.py (run 폴더 구성)
+│   │   ├── data/         brackish.py (프레임·AAU 정답), splits.py (영상 분할), boxes.py (IoU·NMS), labels.py (박스 정답)
+│   │   ├── detectors/    dino.py (Grounding DINO + 캐시), yolo.py (YOLO 데이터·학습·수렴)
+│   │   ├── judges/       base, threshold(①), vlm(②), jev(③), evidence.py (Jev 증거), gate.py (④)
+│   │   ├── evaluation/   metrics.py, evaluate.py (metrics.json), contracts.py (데이터 계약)
+│   │   └── outputs/      plots.py (그림), viz.py (오버레이), report.py (README)
+│   └── tests/
+├── docs/           PLAN.md, DATA.md
+├── train/          YOLO 학습 결과 (gitignore)
+└── data/ runs/ .env  (gitignore)
 ```
 
 ## 10. git 운영
