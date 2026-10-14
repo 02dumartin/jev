@@ -20,7 +20,7 @@ from .gate import GATES, combine, fit_detector_threshold, fit_gate_thresholds
 from .judges.base import Budget
 from .judges.threshold import ThresholdJudge
 from .label import detector_coverage, label_candidates, label_summary, summary_markdown
-from .runio import RunDir, write_jsonl
+from .runio import RunDir
 
 # Config sections a reused judge output depends on. Reuse is refused when any of them differ.
 REUSE_DEPENDS = {
@@ -74,10 +74,12 @@ def resolve_thresholds(cfg: dict, run: RunDir, labels: list[dict], cands: list[d
 class Pipeline:
     """Runs the stages for one config. `reuse` maps 'vlm'/'jev' to an earlier RunDir with identical inputs."""
 
-    def __init__(self, cfg: dict, repo: Path, reuse: dict[str, RunDir] | None = None):
+    def __init__(self, cfg: dict, repo: Path, reuse: dict[str, RunDir] | None = None,
+                 resume_jev: list[Path] | None = None):
         self.cfg = cfg
         self.repo = repo
         self.reuse = reuse or {}
+        self.resume_jev = resume_jev or []
         self.systems = cfg["run"]["systems"]
         self.budget = Budget(cfg)
         load_dotenv(repo / ".env")
@@ -201,10 +203,13 @@ class Pipeline:
         else:
             from .judges.jev import JevJudge
 
-            judge = JevJudge(self.cfg, self.budget, log)
+            checkpoint = run.path / "raw" / "jev_responses.jsonl"
+            checkpoint.parent.mkdir(exist_ok=True)
+            judge = JevJudge(self.cfg, self.budget, log, checkpoint=checkpoint, resume=self.resume_jev)
+            if judge.stored:
+                log(f"S5 jev: {len(judge.stored)} stored responses available from {len(self.resume_jev)} file(s)")
             run.write_decisions("jev", self._timed(run, "jev", partial(judge.judge, frames, cands, evidence)))
-            write_jsonl(run.path / "raw" / "jev_responses.jsonl", judge.raw)
-            log(f"S5 jev: {self.budget.jev_requests} requests, {self.budget.jev_tokens} tokens")
+            log(f"S5 jev: {self.budget.jev_requests} new requests, {self.budget.jev_tokens} tokens")
         return run.read_decisions("jev")
 
     def _judge_vlm(self, run, frames, cands, evidence):

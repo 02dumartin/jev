@@ -16,7 +16,9 @@ def main() -> None:
     ap.add_argument("--split", choices=["dev", "test"], help="shortcut for --set run.split=...")
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE", help="config overrides")
     ap.add_argument("--reuse-from", type=Path, help="earlier run folder to copy outputs from")
-    ap.add_argument("--reuse", default="", help="comma list of outputs to copy: candidates,vlm,jev")
+    ap.add_argument("--reuse", default="", help="comma list of judge outputs to copy: vlm,jev")
+    ap.add_argument("--resume-jev", type=Path, nargs="*", default=[],
+                    help="earlier raw/jev_responses.jsonl files; identical requests reuse the stored response")
     args = ap.parse_args()
 
     overrides = list(args.set) + ([f"run.split={args.split}"] if args.split else [])
@@ -27,7 +29,7 @@ def main() -> None:
             ap.error("--reuse needs --reuse-from")
         source = RunDir(args.reuse_from)
         reuse = {what.strip(): source for what in args.reuse.split(",") if what.strip()}
-    run = Pipeline(cfg, REPO, reuse).run()
+    run = Pipeline(cfg, REPO, reuse, args.resume_jev).run()
     print(f"\nrun_id: {run.run_id}\nfolder: {run.path}")
 
 

@@ -45,3 +45,25 @@ def test_budget_stops_requests(cfg):
     b.reserve_jev_request()
     with pytest.raises(BudgetExceeded):
         b.reserve_jev_request()
+
+
+def test_resume_reuses_identical_request_and_checkpoints(cfg, tmp_path, monkeypatch):
+    import json
+
+    from jevgate.judges.jev import JevJudge
+
+    monkeypatch.setenv(cfg["jev"]["api_key_env"], "dummy")
+    group = [("id-a", _ev())]
+    body = build_request(cfg, group)
+    q_class, q_need = question_keys("id-a")
+    probs = dict.fromkeys(cfg["classes"], 0.0) | {"crab": 1.0}
+    response = {"model": "jev-x", "usage": {"input_tokens": 10, "output_tokens": 2},
+                "answers": {q_class: {"probabilities": probs, "confidence": 1.0},
+                            q_need: {"score": 0.0, "probabilities": {"0": 1.0}}}}
+    old = tmp_path / "old.jsonl"
+    old.write_text(json.dumps({"cand_ids": ["id-a"], "request": body, "response": response, "latency_ms": 5}) + "\n")
+    judge = JevJudge(cfg, Budget(cfg), checkpoint=tmp_path / "new.jsonl", resume=[old])
+    monkeypatch.setattr(judge.client, "post", lambda b: (_ for _ in ()).throw(AssertionError("no HTTP call")))
+    row = judge._run_group(group)[0][0]
+    assert row["pred"] == "crab" and row["need_vlm"] == 1.0
+    assert json.loads((tmp_path / "new.jsonl").read_text())["reused"] is True

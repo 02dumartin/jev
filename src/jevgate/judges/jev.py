@@ -7,17 +7,20 @@ Jev accepts text only, so each box is described by its detector label/score, geo
 track features (evidence.py). With batching='per_frame' one request carries every box of a frame.
 """
 
+import json
 import math
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import httpx
 
 from ..config import class_names
 from .base import Budget, Judge, decision
 
-RETRY_STATUS = {429, 500, 502, 503, 529}
+RETRY_STATUS = {408, 429, 499, 529}  # plus every 5xx
 
 
 class JevError(RuntimeError):
@@ -115,8 +118,9 @@ class JevClient:
                     continue
                 raise JevError(f"connection failed: {type(exc).__name__}") from None
             latency = (time.perf_counter() - started) * 1000
-            if response.status_code in RETRY_STATUS and attempt + 1 < self.max_retries:
-                time.sleep(0.5 * 2**attempt)
+            retryable = response.status_code in RETRY_STATUS or response.status_code >= 500
+            if retryable and attempt + 1 < self.max_retries:
+                time.sleep(min(30.0, 1.0 * 2**attempt))
                 continue
             if response.is_error:
                 raise JevError(f"HTTP {response.status_code}: {response.text[:300]}")
@@ -130,13 +134,24 @@ class JevClient:
 class JevJudge(Judge):
     name = "jev"
 
-    def __init__(self, cfg: dict, budget: Budget, log=None):
+    def __init__(self, cfg: dict, budget: Budget, log=None, checkpoint: Path | None = None,
+                 resume: list[Path] | None = None):
+        """checkpoint: raw responses are appended here as they arrive (a failure loses nothing).
+        resume: earlier checkpoint files; a stored response is reused only if its request body is identical."""
         self.cfg = cfg
         self.classes = class_names(cfg)
         self.n_levels = len(cfg["prompts"]["need_vlm_levels"])
         self.client = JevClient(cfg, budget)
         self.log = log
-        self.raw: list[dict] = []
+        self.checkpoint = checkpoint
+        self.lock = threading.Lock()
+        self.stored: dict[str, dict] = {}
+        for path in resume or []:
+            if Path(path).exists():
+                for line in Path(path).open():
+                    if line.strip():
+                        rec = json.loads(line)
+                        self.stored[_body_key(rec["request"])] = rec
 
     def _groups(self, candidates, evidence) -> list[list[tuple[str, dict]]]:
         ev = {e["cand_id"]: e for e in evidence}
@@ -149,7 +164,11 @@ class JevJudge(Judge):
 
     def _run_group(self, group) -> tuple[list[dict], dict]:
         body = build_request(self.cfg, group)
-        data, latency = self.client.post(body)
+        stored = self.stored.get(_body_key(body))
+        if stored is not None:
+            data, latency = stored["response"], stored["latency_ms"]
+        else:
+            data, latency = self.client.post(body)
         usage = data.get("usage", {})
         answers = data.get("answers", {})
         n = len(group)
@@ -165,17 +184,24 @@ class JevJudge(Judge):
                 jev_choice_confidence=answers[q_class].get("confidence"), **need,
             ))
         raw = {"cand_ids": [cid for cid, _ in group], "request": body, "response": data,
-               "latency_ms": round(latency, 1)}
+               "latency_ms": round(latency, 1), "reused": stored is not None}
+        if self.checkpoint is not None:
+            with self.lock, self.checkpoint.open("a") as f:
+                f.write(json.dumps(raw, ensure_ascii=False) + "\n")
         return rows, raw
 
     def judge(self, frames, candidates, evidence):
         groups = self._groups(candidates, evidence)
         by_id, done = {}, 0
         with ThreadPoolExecutor(self.cfg["jev"]["max_concurrency"]) as pool:
-            for rows, raw in pool.map(self._run_group, groups):
+            for rows, _ in pool.map(self._run_group, groups):
                 by_id.update({r["cand_id"]: r for r in rows})
-                self.raw.append(raw)
                 done += 1
                 if self.log and done % 1000 == 0:
                     self.log(f"  Jev {done}/{len(groups)} requests")
         return [by_id[c["cand_id"]] for c in candidates]
+
+
+def _body_key(body: dict) -> str:
+    """Canonical request text: a stored response is reused only for an identical request."""
+    return json.dumps(body, sort_keys=True, ensure_ascii=False)
