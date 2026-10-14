@@ -175,9 +175,9 @@ def plot_run(run: RunDir) -> list[Path]:
             draw_roc(ax, data["roc"][s], row["auc"], data["operating_points"][s], classes, min_n,
                      f"{SYSTEM_TITLE[s]}   {n_tag}")
             save(fig, f"roc_{s}.png")
-        fig = plt.figure(figsize=(9, 5.2))
+        fig = plt.figure(figsize=(9, 4.6))
         draw_2x2_grid(fig, row["ovr"], support, classes, min_n, f"{SYSTEM_TITLE[s]}   {n_tag}")
-        fig.subplots_adjust(hspace=0.7, wspace=0.45)
+        fig.subplots_adjust(top=0.82, bottom=0.08, hspace=0.62, wspace=0.45)
         save(fig, f"ovr_2x2_{s}.png")
         fig, ax = plt.subplots(figsize=(5.6, 5))
         draw_confusion(ax, row["confusion"], f"{SYSTEM_TITLE[s]}   acc {_fmt(row['accuracy'], 3)}")
@@ -205,8 +205,8 @@ def plot_run(run: RunDir) -> list[Path]:
 
 def main_figure(m: dict, data: dict, classes: list[str], min_n: int, primary: str):
     """A: ③ Jev ROC, B: ② VLM ROC, C: ③ Jev 2x2 per class, D: ④ primary gate 2x2 per class."""
-    fig = plt.figure(figsize=(14, 12.5))
-    top, bottom = fig.subfigures(2, 1, height_ratios=[1, 1.15])
+    fig = plt.figure(figsize=(14, 11))
+    top, bottom = fig.subfigures(2, 1, height_ratios=[1, 0.85])
     a_ax, b_ax = top.subplots(1, 2)
     n_tag = f"n = {m['n_box']}"
     for ax, s, letter in ((a_ax, "jev", "A"), (b_ax, "vlm", "B")):
@@ -217,5 +217,5 @@ def main_figure(m: dict, data: dict, classes: list[str], min_n: int, primary: st
         row = m["systems"][s]
         draw_2x2_grid(sub, row["ovr"], {c: row["per_class"][c]["support"] for c in classes}, classes, min_n,
                       f"{letter}   {SYSTEM_TITLE[s]}   {n_tag}")
-        sub.subplots_adjust(hspace=0.75, wspace=0.5)
+        sub.subplots_adjust(top=0.82, bottom=0.06, hspace=0.62, wspace=0.5)
     return fig

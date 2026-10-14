@@ -1,9 +1,10 @@
-# jev-gate 실험 계획 (v2, 2026-10-14)
+# jev-gate 실험 계획 (v3, 2026-10-14)
 
 > 질문: Grounding DINO가 낸 후보 박스가 **무엇인가**(6종 생물 또는 background)를 판정할 때,
 > Jev(calibrated 확률)를 게이트로 쓰면 VLM 호출을 줄이면서 정확도를 유지할 수 있는가?
 >
-> v1 → v2 변경 (결과를 보기 전, 2026-10-14): 이진 판정(real/fake) → 7-way 클래스 판정, 클립 재선정, 단계별 산출물 정의. §14 참고.
+> v3 (test 결과를 보기 전, 2026-10-14): 원본 train+valid = dev / test = test (전체 데이터), Jev에게 class와 need_vlm(5단계)을 함께 묻고
+> need_vlm이 높은 박스만 VLM으로 넘기는 게이트를 primary로, 시간 기록 보강. §14 참고. n 수는 `docs/DATA.md`.
 
 ---
 
@@ -24,12 +25,15 @@
 |---|---|---|---|---|
 | ① | 기존 detector | DINO score ≥ `t`면 DINO 라벨, 아니면 background | 라벨 클래스 = score, background = 1 − score, 나머지 0 | `t` (dev, 정확도 최대) |
 | ② | DINO + VLM | Qwen3-VL-8B가 crop을 보고 선택지 A~G 중 하나 | 선택지 글자 토큰 7개의 softmax (forward 1번) | 없음 |
-| ③ | DINO + Jev | Jev `choice` 질문 (선택지 7개) | Jev `probabilities` | 없음 (argmax 고정) |
-| ④ | Jev 게이트 + VLM | Jev 최고 확률 ≥ `τ`면 Jev 답, 아니면 VLM 답 | 경로별 원래 점수 (ROC는 점으로만) | `τ` (dev) |
+| ③ | DINO + Jev | Jev `choice` 질문 (선택지 7개) + `need_vlm` score 질문 (1~5단계) | Jev `probabilities` | 없음 (argmax 고정) |
+| ④ (primary) | Jev need_vlm 게이트 | need_vlm ≥ `τ_e`인 박스만 VLM 답, 나머지는 Jev 답 | 경로별 원래 점수 (ROC는 점으로만) | `τ_e` (dev) |
+| ④a | Jev 확신도 게이트 | Jev 최고 확률 < `τ_c`면 VLM | 〃 | `τ_c` (dev) |
+| ④c | 둘 중 하나 | 둘 중 하나라도 걸리면 VLM | 〃 | `τ_e`, `τ_c` |
 
 - ④는 ②와 ③의 판정 파일을 조합해서 계산한다. 추가 실행이 필요 없다.
 - **Jev는 텍스트만 받는다** ("Jev accepts text only"). ③은 픽셀이 아니라 **구조화된 증거**(§4)로 판정한다. 클래스 구분 근거가 DINO 라벨·크기·위치·움직임뿐이라 사실상 DINO 라벨을 재보정하는 수준일 수 있다. 발표에서 반드시 밝힌다.
-- ②와 ③은 같은 질문 문장과 같은 선택지 설명(`classes.*.description`)을 쓴다.
+- ②와 ③은 같은 질문 문장, 같은 클래스 설명, 같은 DINO 제안 정보(라벨·score)를 받는다. ②는 이미지, ③은 텍스트 증거를 추가로 본다.
+- 각 τ는 dev에서 "자동 처리분 오류율 ≤ 0.05인 설정 중 자동 처리가 가장 많은 값"으로 정한다.
 - (탐색, P2) ③′: 같은 텍스트 증거를 Qwen3-VL에 이미지 없이 넣는 대조군.
 
 ## 2. 데이터와 정답
@@ -52,7 +56,13 @@
 - GT 박스는 프레임 경계로 자른 뒤 IoU를 계산한다.
 - 후보는 클래스 무관 NMS(IoU 0.5) 후 라벨링한다.
 
-### 2.3 클립 분할 (영상 단위, v2 재선정)
+### 2.3 분할 (v3: 원본 분할, 전체 데이터)
+
+- dev = 원본 `train.txt` + `valid.txt` 13,206프레임, test = 원본 `test.txt` 1,468프레임. 자세한 n 수는 `docs/DATA.md`.
+- 원본은 프레임 단위 무작위 분할이라 모든 영상이 양쪽에 있다 → 결과에 각주로 밝힌다.
+- Jev 증거의 시간 특징은 같은 영상의 이전 K프레임(분할과 무관)의 **DINO 출력만** 쓴다. GT는 쓰지 않는다.
+
+### (v2 기록) 클립 분할 — v3에서 폐기
 v1 클립 3개는 shrimp·jellyfish가 없고 dev에 fish·crab이 없어서, **dev와 test 각각이 6종을 모두 포함**하도록 다시 골랐다. v1 test 클립 2개는 그대로 유지했다.
 
 | 용도 | 영상 | 프레임 | GT 박스 (AAU) |
@@ -179,12 +189,12 @@ runs/261014_dev/
 
 ## 5. Endpoint (결과를 보기 전에 고정. v1 2026-10-13, v2 2026-10-14에 다중 클래스로 갱신)
 
-모든 endpoint는 **test 클립 4개**에서, dev에서 고정한 `t`·`τ`로 **한 번만** 측정한다.
+모든 endpoint는 **test 분할 전체(1,468프레임)**에서, dev에서 고정한 `t`·`τ`로 **한 번만** 측정한다.
 
 ### 5.1 Primary: ④는 ② 대비 정확도를 유지하면서 VLM 호출을 줄이는가
 | 지표 | 정의 | 성공 기준 |
 |---|---|---|
-| 정확도 차이 | Δacc = acc(④) − acc(②), 7-way 정확도, 95% CI는 프레임 블록 bootstrap | CI 하한 ≥ **−0.02** |
+| 정확도 차이 | Δacc = acc(④ need_vlm 게이트) − acc(②), 7-way 정확도, 95% CI는 프레임 블록 bootstrap | CI 하한 ≥ **−0.02** |
 | VLM 호출 비율 | ④ 호출 수 / ② 호출 수 | ≤ **0.5** |
 
 - 두 조건을 **동시에** 만족해야 성공이다.
@@ -199,6 +209,7 @@ runs/261014_dev/
 |---|---|---|
 | S1 | Jev 확률을 믿을 수 있나 (③) | top-label ECE (15 bin), 다중 클래스 Brier, reliability diagram |
 | S2 | dev 게이트 기준이 test에서도 지켜지나 (④) | test 자동 처리분 오류율 vs ε = 0.05, 자동 처리 비율 |
+| S2′ | Jev는 자기가 틀릴 때를 아는가 | need_vlm으로 Jev 오답을 예측하는 AUROC, need_vlm 단계별 Jev 오류율, ④ vs ④a vs ④c |
 | S3 | Jev 단독이 기존 detector보다 나은가 (③ vs ①) | 정확도 → macro F1 → 클래스별 Precision·Recall |
 | S4 | 클래스별로 어디서 갈리나 (①~④) | 클래스별 one-vs-rest AUC [CI], sens/spec |
 | S5 | 실제 속도와 비용 (①~④) | 박스당 지연 중앙값, 총 시간, 비용 |
@@ -219,6 +230,8 @@ runs/261014_dev/
 | AUC | 클래스별 one-vs-rest, 프레임 블록 bootstrap CI |
 | VLM 호출 | ② = 후보 수, ③ = 0, ④ = 넘긴 수 |
 | 지연 | 박스당 판정 시간 중앙값. ④는 경로별로도 |
+| 프레임 시간 | 실시간 가정: DINO + 그 프레임의 판정(Jev 요청 1회, VLM 박스 합) ms, 평균·중앙값, fps |
+| 단계 시간 | `timing.json`: detect_load, detect, jev, vlm_load, vlm, threshold, evaluate (초) |
 | 비용 | Jev 토큰 × `cost.jev_usd_per_1m_tokens`, VLM GPU-초 |
 
 - 지표 순서는 항상 정확도 → macro F1 → Precision → Recall → ECE → VLM 호출 → 지연 → 비용.
@@ -307,3 +320,6 @@ jev-gate/
 
 - v1 (2026-10-13): 이진 판정, 클립 3개, endpoint 사전 등록.
 - v2 (2026-10-14, 결과 보기 전): 7-way 클래스 판정 (6종 + background), VLM은 선택지 logit, Jev는 `choice`, 클립 8개로 재선정 (dev·test 각 6종 포함), 단계별 산출물 정의.
+- v3 (2026-10-14, test 결과 보기 전): 원본 train+valid/test 분할로 전체 데이터 사용, Jev need_vlm 5단계 질문 추가, primary = need_vlm 게이트(④a·④c는 secondary), 시간 기록 보강.
+  dev 점검(`261014_smoke`, `261014_smoke60`)으로 정한 것: DINO box_threshold 0.15 → 0.25 (동물 박스 20개 중 19개 유지, background 후보 약 75% 감소), 공통 맥락 문장 보강, VLM에도 DINO 제안 라벨·score 제공, Jev 클래스 정의를 state에 한 번만 기재(입력 토큰 −22%).
+  관찰: dev 60프레임에서 VLM이 동물 박스 대부분을 background로 판정(정확도 0.646). background logit 보정은 +3%p뿐이라 넣지 않았다.
