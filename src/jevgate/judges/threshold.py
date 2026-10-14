@@ -1,7 +1,7 @@
 """① Existing detector: the DINO label when its score >= t, otherwise background."""
 
-from ..config import BACKGROUND
-from .base import Judge, decision
+from jevgate.core.config import BACKGROUND
+from jevgate.judges.base import Judge, decision
 
 
 def detector_probs(dino_label: str, score: float, classes: list[str]) -> dict[str, float]:

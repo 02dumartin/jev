@@ -9,7 +9,7 @@ Each tau is fitted on dev as the setting with the most auto-handled boxes whose 
 
 import numpy as np
 
-from .config import BACKGROUND
+from jevgate.core.config import BACKGROUND
 
 GATES = ("gate", "gate_conf", "gate_either")
 

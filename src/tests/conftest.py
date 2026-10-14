@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from jevgate.config import load_config
+from jevgate.core.config import load_config
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture

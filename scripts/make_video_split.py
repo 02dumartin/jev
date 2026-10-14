@@ -3,9 +3,9 @@
 import argparse
 from pathlib import Path
 
-from jevgate.config import load_config
-from jevgate.data import load_gt
-from jevgate.splits import make_video_split, video_categories, video_stats, write_split
+from jevgate.core.config import load_config
+from jevgate.data.brackish import load_gt
+from jevgate.data.splits import make_video_split, video_categories, video_stats, write_split
 
 REPO = Path(__file__).resolve().parents[1]
 

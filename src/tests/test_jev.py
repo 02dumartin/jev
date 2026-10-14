@@ -1,6 +1,6 @@
 import pytest
 
-from jevgate.config import class_names
+from jevgate.core.config import class_names
 from jevgate.judges.base import Budget, BudgetExceeded
 from jevgate.judges.jev import JevError, build_request, question_keys, validate_choice, validate_score
 

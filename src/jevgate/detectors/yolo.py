@@ -6,8 +6,8 @@ from pathlib import Path
 
 import yaml
 
-from .data import BrackishGT, image_path, parse_frame_name
-from .splits import SPLITS, listed_frames, load_split
+from jevgate.data.brackish import BrackishGT, image_path, parse_frame_name
+from jevgate.data.splits import SPLITS, listed_frames, load_split
 
 
 def detector_classes(cfg: dict) -> list[str]:

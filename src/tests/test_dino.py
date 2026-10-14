@@ -1,4 +1,4 @@
-from jevgate.detect import normalize_label
+from jevgate.detectors.dino import normalize_label
 
 P2C = {"fish": "fish", "small fish": "small_fish", "crab": "crab", "shrimp": "shrimp",
        "jellyfish": "jellyfish", "starfish": "starfish"}

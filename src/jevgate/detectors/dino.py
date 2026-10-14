@@ -10,10 +10,10 @@ from pathlib import Path
 import torch
 from PIL import Image
 
-from .boxes import area, clip_box, nms
-from .config import config_hash
-from .data import frame_file, image_path
-from .runio import read_jsonl
+from jevgate.core.config import config_hash
+from jevgate.core.runio import read_jsonl
+from jevgate.data.boxes import area, clip_box, nms
+from jevgate.data.brackish import frame_file, image_path
 
 
 def normalize_label(raw: str, phrase_to_class: dict[str, str]) -> str | None:

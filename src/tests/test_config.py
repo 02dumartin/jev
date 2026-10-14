@@ -1,7 +1,7 @@
 import pytest
 from conftest import REPO
 
-from jevgate.config import ConfigError, deep_merge, load_config, parse_overrides
+from jevgate.core.config import ConfigError, deep_merge, load_config, parse_overrides
 
 
 def test_smoke_inherits_base():
@@ -30,7 +30,7 @@ def test_rejects_bad_settings():
 
 
 def test_gt_source_drops_background_and_detector_baseline():
-    from jevgate.config import class_names
+    from jevgate.core.config import class_names
 
     cfg = load_config(REPO / "configs" / "base.yaml")
     assert cfg["candidates"]["source"] == "gt" and "background" not in class_names(cfg)

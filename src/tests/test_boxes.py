@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from jevgate.boxes import clip_box, iou_matrix, nms
+from jevgate.data.boxes import clip_box, iou_matrix, nms
 
 
 def test_iou_identical_disjoint_and_half():

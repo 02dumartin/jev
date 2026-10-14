@@ -4,9 +4,9 @@ import argparse
 import shutil
 from pathlib import Path
 
-from jevgate import plots, report, viz
-from jevgate.data import load_gt
-from jevgate.runio import RunDir
+from jevgate.core.runio import RunDir
+from jevgate.data.brackish import load_gt
+from jevgate.outputs import plots, report, viz
 
 
 def main() -> None:

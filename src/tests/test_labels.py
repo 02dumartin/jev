@@ -1,7 +1,7 @@
 from conftest import cand
 
-from jevgate.data import BrackishGT, GTBox
-from jevgate.label import AMBIGUOUS, detector_coverage, iou_to_label, label_candidates
+from jevgate.data.brackish import BrackishGT, GTBox
+from jevgate.data.labels import AMBIGUOUS, detector_coverage, iou_to_label, label_candidates
 
 
 def test_iou_bands():

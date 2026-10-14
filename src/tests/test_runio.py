@@ -1,6 +1,6 @@
 import datetime as dt
 
-from jevgate.runio import RunDir, next_run_dir
+from jevgate.core.runio import RunDir, next_run_dir
 
 
 def test_run_dir_naming(tmp_path):

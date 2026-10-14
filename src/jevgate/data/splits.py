@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from .data import BrackishGT, parse_frame_name, split_files
+from jevgate.data.brackish import BrackishGT, parse_frame_name, split_files
 
 SPLITS = ("train", "val", "test")
 

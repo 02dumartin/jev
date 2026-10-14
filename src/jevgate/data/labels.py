@@ -2,9 +2,9 @@
 
 from collections import Counter
 
-from .boxes import iou_matrix
-from .config import BACKGROUND
-from .data import BrackishGT
+from jevgate.data.boxes import iou_matrix
+from jevgate.core.config import BACKGROUND
+from jevgate.data.brackish import BrackishGT
 
 AMBIGUOUS = "ambiguous"
 

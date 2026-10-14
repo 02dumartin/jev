@@ -9,7 +9,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from jevgate.yolo import convergence, read_results  # noqa: E402
+from jevgate.detectors.yolo import convergence, read_results  # noqa: E402
 
 
 def main() -> None:

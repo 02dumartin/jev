@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from .evaluate import SYSTEM_ORDER, SYSTEM_TITLE
-from .runio import RunDir
+from jevgate.core.runio import RunDir
+from jevgate.evaluation.evaluate import SYSTEM_ORDER, SYSTEM_TITLE
 
 FIGURE_GUIDE = {
     "fig1_tradeoff.png": "**Primary**: 시스템마다 점 하나. x = VLM으로 보낸 박스 비율, "

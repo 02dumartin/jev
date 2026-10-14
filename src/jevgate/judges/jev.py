@@ -17,8 +17,8 @@ from pathlib import Path
 
 import httpx
 
-from ..config import class_defs, class_names
-from .base import Budget, Judge, decision
+from jevgate.core.config import class_defs, class_names
+from jevgate.judges.base import Budget, Judge, decision
 
 RETRY_STATUS = {408, 429, 499, 529}  # plus every 5xx
 

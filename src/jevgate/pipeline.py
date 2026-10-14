@@ -10,16 +10,16 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-from . import plots, report, viz
-from .config import class_names
-from .data import BrackishGT, available_frames, build_frames, context_frames, frame_file, load_gt
-from .evaluate import evaluate_run
-from .evidence import build_evidence
-from .gate import GATES, combine, fit_detector_threshold, fit_gate_thresholds
-from .judges.base import Budget
-from .judges.threshold import ThresholdJudge
-from .label import detector_coverage, label_candidates, label_summary
-from .runio import RunDir, read_jsonl, write_jsonl
+from jevgate.core.config import class_names
+from jevgate.core.runio import RunDir, read_jsonl, write_jsonl
+from jevgate.data.brackish import BrackishGT, available_frames, build_frames, context_frames, frame_file, load_gt
+from jevgate.data.labels import detector_coverage, label_candidates, label_summary
+from jevgate.evaluation.evaluate import evaluate_run
+from jevgate.judges.base import Budget
+from jevgate.judges.evidence import build_evidence
+from jevgate.judges.gate import GATES, combine, fit_detector_threshold, fit_gate_thresholds
+from jevgate.judges.threshold import ThresholdJudge
+from jevgate.outputs import plots, report, viz
 
 # Config sections a reused judge output depends on. Reuse is refused when any of them differ.
 REUSE_DEPENDS = {
@@ -116,13 +116,13 @@ class Pipeline:
         targets = [(f["clip"], f["frame_idx"]) for f in frames]
         if self.cfg["candidates"]["source"] == "gt":
             return gt_candidates(gt, targets), gt_candidates(gt, ctx), {}
-        from .detect import DetectionCache
+        from jevgate.detectors.dino import DetectionCache
 
         cache = DetectionCache(self.cfg, self.repo)
         todo = cache.missing(ctx)
         log(f"S2 DINO: {len(ctx)} frames needed ({len(frames)} target + context), {len(todo)} not cached")
         if todo:
-            from .detect import GroundingDinoDetector
+            from jevgate.detectors.dino import GroundingDinoDetector
 
             detector = self._timed("detect_load", partial(GroundingDinoDetector, self.cfg))
             cache.add(self._timed("detect", partial(detector.detect_frames, self.cfg, todo, log)))
@@ -219,7 +219,7 @@ class Pipeline:
     def _judge_jev(self, run, frames, cands, evidence) -> list[dict]:
         if "jev" in self.reuse:
             return self._reuse(run, "jev")
-        from .judges.jev import JevJudge
+        from jevgate.judges.jev import JevJudge
 
         checkpoint = run.cache_file("jev_responses.jsonl")
         checkpoint.parent.mkdir(exist_ok=True)
@@ -234,7 +234,7 @@ class Pipeline:
     def _judge_vlm(self, run, frames, cands, evidence) -> list[dict]:
         if "vlm" in self.reuse:
             return self._reuse(run, "vlm")
-        from .judges.vlm import VLMJudge
+        from jevgate.judges.vlm import VLMJudge
 
         judge = self._timed("vlm_load", partial(VLMJudge, self.cfg, self.budget, log))
         run.cache_file("vlm_prompt.txt").parent.mkdir(exist_ok=True)

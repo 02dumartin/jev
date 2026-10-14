@@ -3,9 +3,9 @@
 import argparse
 from pathlib import Path
 
-from jevgate.data import load_gt
-from jevgate.runio import RunDir
-from jevgate.viz import render_samples
+from jevgate.core.runio import RunDir
+from jevgate.data.brackish import load_gt
+from jevgate.outputs.viz import render_samples
 
 
 def main() -> None:

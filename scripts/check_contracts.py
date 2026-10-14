@@ -4,8 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from jevgate.contracts import check_run
-from jevgate.runio import RunDir
+from jevgate.core.runio import RunDir
+from jevgate.evaluation.contracts import check_run
 
 
 def main() -> None:

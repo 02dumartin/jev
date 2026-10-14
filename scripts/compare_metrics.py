@@ -10,8 +10,8 @@ import json
 import sys
 from pathlib import Path
 
-from jevgate.config import config_hash
-from jevgate.runio import RunDir
+from jevgate.core.config import config_hash
+from jevgate.core.runio import RunDir
 
 REPO = Path(__file__).resolve().parents[1]
 HIGHER_IS_BETTER = ["accuracy", "macro_f1", "macro_precision", "macro_recall"]

@@ -9,9 +9,9 @@ import time
 import torch
 from PIL import Image, ImageDraw
 
-from ..config import class_defs, class_names
-from ..data import image_path
-from .base import Budget, Judge, decision
+from jevgate.core.config import class_defs, class_names
+from jevgate.data.brackish import image_path
+from jevgate.judges.base import Budget, Judge, decision
 
 LETTERS = "ABCDEFGHIJ"
 

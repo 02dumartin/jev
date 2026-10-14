@@ -3,9 +3,9 @@
 import argparse
 from pathlib import Path
 
-from jevgate.config import load_config
+from jevgate.core.config import load_config
+from jevgate.core.runio import RunDir
 from jevgate.pipeline import Pipeline
-from jevgate.runio import RunDir
 
 REPO = Path(__file__).resolve().parents[1]
 

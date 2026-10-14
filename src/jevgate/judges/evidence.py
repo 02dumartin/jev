@@ -6,7 +6,7 @@ never read, so Jev sees what an online system would see.
 
 import numpy as np
 
-from .boxes import area, iou_matrix
+from jevgate.data.boxes import area, iou_matrix
 
 
 def geometry(box, wh) -> dict:

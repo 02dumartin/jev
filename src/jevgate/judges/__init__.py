@@ -1,1 +1,1 @@
-"""Judges: one class decision (6 animals or background) per candidate box."""
+"""Judges: one class decision per candidate box (detector, VLM, Jev), Jev evidence, and the gates."""

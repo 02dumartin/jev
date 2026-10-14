@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from jevgate.runio import RunDir
+from jevgate.core.runio import RunDir
 
 REPO = Path(__file__).resolve().parents[1]
 

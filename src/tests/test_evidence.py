@@ -1,8 +1,8 @@
 from conftest import cand
 
-from jevgate.contracts import check_evidence
-from jevgate.data import context_frames
-from jevgate.evidence import build_evidence
+from jevgate.data.brackish import context_frames
+from jevgate.evaluation.contracts import check_evidence
+from jevgate.judges.evidence import build_evidence
 
 
 def _ev(targets, context, cfg):

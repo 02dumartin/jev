@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .boxes import clip_box
+from jevgate.data.boxes import clip_box
 
 FRAME_RE = re.compile(r"^(?P<clip>.+)-(?P<idx>\d{4})\.png$")
 

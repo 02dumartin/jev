@@ -5,10 +5,10 @@ from collections import defaultdict
 
 import numpy as np
 
-from . import metrics as M
-from .config import BACKGROUND, class_names
-from .gate import GATES, auto_curve, conf_grid, need_vlm_grid
-from .runio import RunDir
+from jevgate.core.config import BACKGROUND, class_names
+from jevgate.core.runio import RunDir
+from jevgate.evaluation import metrics as M
+from jevgate.judges.gate import GATES, auto_curve, conf_grid, need_vlm_grid
 
 SYSTEM_ORDER = ["threshold", "vlm", "jev", "gate", "gate_conf", "gate_either"]
 SYSTEM_TITLE = {"threshold": "① detector (DINO score ≥ t)", "vlm": "② VLM", "jev": "③ Jev",

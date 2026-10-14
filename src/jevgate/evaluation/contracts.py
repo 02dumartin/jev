@@ -2,11 +2,11 @@
 
 from collections import Counter
 
-from .config import class_names
-from .data import evenly_spaced, split_files
-from .gate import GATES
-from .label import AMBIGUOUS
-from .runio import RunDir
+from jevgate.core.config import class_names
+from jevgate.core.runio import RunDir
+from jevgate.data.brackish import evenly_spaced, split_files
+from jevgate.data.labels import AMBIGUOUS
+from jevgate.judges.gate import GATES
 
 REQUIRED = {
     "frames": ["clip", "split", "frame_idx", "file", "gt_status", "detect_ms"],

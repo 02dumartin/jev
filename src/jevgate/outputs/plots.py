@@ -20,8 +20,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 
-from .evaluate import SYSTEM_TITLE  # noqa: E402
-from .runio import RunDir  # noqa: E402
+from jevgate.core.runio import RunDir  # noqa: E402
+from jevgate.evaluation.evaluate import SYSTEM_TITLE  # noqa: E402
 
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 BACKGROUND_COLOR = "#8a8985"

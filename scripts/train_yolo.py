@@ -3,8 +3,8 @@
 import argparse
 from pathlib import Path
 
-from jevgate.config import load_config
-from jevgate.yolo import train
+from jevgate.core.config import load_config
+from jevgate.detectors.yolo import train
 
 REPO = Path(__file__).resolve().parents[1]
 

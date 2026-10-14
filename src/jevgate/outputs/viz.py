@@ -11,10 +11,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .config import BACKGROUND
-from .data import image_path
-from .label import AMBIGUOUS
-from .runio import RunDir
+from jevgate.core.config import BACKGROUND
+from jevgate.core.runio import RunDir
+from jevgate.data.brackish import image_path
+from jevgate.data.labels import AMBIGUOUS
 
 GREEN, YELLOW, RED, ORANGE, GREY, WHITE = (80, 190, 80), (0, 200, 235), (60, 60, 230), (0, 140, 255), \
     (150, 150, 150), (255, 255, 255)

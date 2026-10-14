@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from jevgate import metrics as M
+from jevgate.evaluation import metrics as M
 
 C = ["fish", "crab", "background"]
 

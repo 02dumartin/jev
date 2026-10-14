@@ -1,4 +1,4 @@
-from jevgate.gate import auto_curve, combine, fit_detector_threshold, fit_gate_thresholds, fit_tau
+from jevgate.judges.gate import auto_curve, combine, fit_detector_threshold, fit_gate_thresholds, fit_tau
 
 
 def _jev(preds, conf, need):
