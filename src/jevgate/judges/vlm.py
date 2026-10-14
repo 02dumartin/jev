@@ -1,7 +1,7 @@
-"""② VLM: Qwen3-VL answers the same question from pixels (full frame with the box drawn + zoomed crop).
+"""② VLM: Qwen3-VL picks one of the judgment classes from pixels (full frame with the box drawn + crop).
 
-The decision is the next-token comparison of "Yes" vs "No" after the prompt; p_yes is stored for
-the appendix only (the plan does not report ECE for ②).
+The classes are listed as options A, B, C, ...; one forward pass gives the next-token logits of
+those letters, and their softmax is the class distribution (used for accuracy, ROC and ECE).
 """
 
 import time
@@ -9,8 +9,11 @@ import time
 import torch
 from PIL import Image, ImageDraw
 
+from ..config import class_names
 from ..data import image_path
 from .base import Budget, Judge, decision
+
+LETTERS = "ABCDEFGHIJ"
 
 
 def crop_view(img: Image.Image, box, context: float, long_side: int) -> Image.Image:
@@ -33,7 +36,8 @@ def frame_view(img: Image.Image, box, color, width: int) -> Image.Image:
 class VLMJudge(Judge):
     name = "vlm"
 
-    def __init__(self, cfg: dict, budget: Budget):
+    def __init__(self, cfg: dict, budget: Budget, log=None):
+        self.log = log
         from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
         self.cfg = cfg
@@ -46,20 +50,31 @@ class VLMJudge(Judge):
             self.vcfg["model"], dtype=getattr(torch, self.vcfg["dtype"]), device_map=self.device
         ).eval()
         tok = self.processor.tokenizer
-        self.yes_id = tok.encode("Yes", add_special_tokens=False)[0]
-        self.no_id = tok.encode("No", add_special_tokens=False)[0]
+        self.classes = class_names(cfg)
+        self.letters = LETTERS[: len(self.classes)]
+        self.letter_ids = [tok.encode(letter, add_special_tokens=False)[0] for letter in self.letters]
+        options = "\n".join(f"{letter}. {c}: {cfg['classes'][c]}" for letter, c in zip(self.letters, self.classes,
+                                                                                   strict=True))
         self.prompt = (
             f"{cfg['prompts']['context']}\n"
             "Image 1 is the full frame with the candidate box drawn in red. "
             "Image 2 is a zoomed crop around the candidate box.\n"
-            f"{cfg['prompts']['question']} Answer with Yes or No."
+            "{hint}"
+            f"{cfg['prompts']['question']}\n{options}\n"
+            f"Answer with a single letter ({', '.join(self.letters)})."
         )
+
+    def _prompt(self, cand: dict) -> str:
+        """Prompt for one box; with show_detector_hint the detector's class and score are stated."""
+        hint = (f"Detector proposal for this box: {cand['dino_label']} (score {cand['dino_score']:.2f}).\n"
+                if self.vcfg.get("show_detector_hint") else "")
+        return self.prompt.replace("{hint}", hint)
 
     def _inputs(self, items):
         texts, images = [], []
-        for img, box in items:
+        for img, box, prompt in items:
             messages = [{"role": "user", "content": [
-                {"type": "image"}, {"type": "image"}, {"type": "text", "text": self.prompt}]}]
+                {"type": "image"}, {"type": "image"}, {"type": "text", "text": prompt}]}]
             texts.append(self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
             images.append([
                 frame_view(img, box, self.vcfg["box_color"], self.vcfg["box_width"]),
@@ -68,10 +83,10 @@ class VLMJudge(Judge):
         return self.processor(text=texts, images=images, padding=True, return_tensors="pt").to(self.device)
 
     @torch.inference_mode()
-    def _p_yes(self, items) -> list[float]:
+    def _class_probs(self, items) -> list[dict[str, float]]:
         logits = self.model(**self._inputs(items)).logits[:, -1, :].float()
-        pair = torch.stack([logits[:, self.yes_id], logits[:, self.no_id]], dim=1)
-        return torch.softmax(pair, dim=1)[:, 0].tolist()
+        probs = torch.softmax(logits[:, self.letter_ids], dim=1).tolist()
+        return [dict(zip(self.classes, p, strict=True)) for p in probs]
 
     def judge(self, frames, candidates, evidence):
         file_of = {(f["clip"], f["frame_idx"]): f["file"] for f in frames}
@@ -85,15 +100,18 @@ class VLMJudge(Judge):
             for c in batch:
                 file = file_of[(c["clip"], c["frame_idx"])]
                 if file not in cache:
+                    # candidates arrive frame by frame, so one cached image is enough
                     cache = {file: Image.open(image_path(self.cfg, file)).convert("RGB")}
-                items.append((cache[file], c["box_xyxy"]))
+                items.append((cache[file], c["box_xyxy"], self._prompt(c)))
             if self.device.startswith("cuda"):
                 torch.cuda.synchronize(self.device)
             started = time.perf_counter()
-            probs = self._p_yes(items)
+            probs = self._class_probs(items)
             if self.device.startswith("cuda"):
                 torch.cuda.synchronize(self.device)
             per_box = (time.perf_counter() - started) * 1000 / len(batch)
-            rows += [decision(c["cand_id"], p >= 0.5, None, per_box, p_yes=round(p, 4), batch_size=len(batch))
+            rows += [decision(c["cand_id"], p, per_box, batch_size=len(batch))
                      for c, p in zip(batch, probs, strict=True)]
+            if self.log and (s // bs) % 200 == 0:
+                self.log(f"  VLM {s + len(batch)}/{len(candidates)} boxes")
         return rows

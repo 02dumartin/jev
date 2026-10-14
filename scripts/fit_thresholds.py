@@ -1,4 +1,4 @@
-"""Freeze t and tau from a full dev run into thresholds.yaml (read by test runs, PLAN.md §7)."""
+"""Freeze t, tau_need_vlm and tau_conf from a full dev run into thresholds.yaml (read by test runs, PLAN.md §7)."""
 
 import argparse
 from pathlib import Path
@@ -19,12 +19,13 @@ def main() -> None:
     th = run.read_json("thresholds.json")
     if th.get("fit_split") != "dev":
         raise SystemExit("refusing: thresholds were not fitted on dev")
-    if th.get("max_frames_per_clip"):
+    if th.get("max_frames"):
         raise SystemExit("refusing: thresholds come from a truncated (smoke) run")
-    if "tau" not in th:
-        raise SystemExit("refusing: run has no Jev decisions, tau missing")
+    if "tau_need_vlm" not in th:
+        raise SystemExit("refusing: run has no Jev decisions, gate thresholds missing")
     args.out.write_text(yaml.safe_dump(th, sort_keys=False))
-    print(f"wrote {args.out}: t={th['t']}, tau={th['tau']} (from {run.run_id})")
+    print(f"wrote {args.out}: t={th['t']}, tau_need_vlm={th['tau_need_vlm']}, tau_conf={th['tau_conf']} "
+          f"(from {run.run_id})")
 
 
 if __name__ == "__main__":

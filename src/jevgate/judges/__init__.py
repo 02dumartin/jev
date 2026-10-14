@@ -1,1 +1,1 @@
-"""Judges: one keep/reject decision per candidate box."""
+"""Judges: one class decision (6 animals or background) per candidate box."""

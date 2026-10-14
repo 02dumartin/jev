@@ -12,5 +12,6 @@ def cfg():
     return load_config(REPO / "configs" / "base.yaml")
 
 
-def cand(cid, frame, box, score=0.5, clip="c"):
-    return {"cand_id": cid, "clip": clip, "frame_idx": frame, "box_xyxy": box, "label": "fish", "dino_score": score}
+def cand(cid, frame, box, score=0.5, clip="c", label="fish"):
+    return {"cand_id": cid, "clip": clip, "frame_idx": frame, "box_xyxy": box, "dino_label": label,
+            "dino_score": score}

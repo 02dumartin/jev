@@ -8,21 +8,23 @@ from pathlib import Path
 import yaml
 
 REQUIRED_KEYS = [
-    "run.name", "run.out_root", "run.split", "run.systems",
-    "data.root", "data.images_dir", "data.aau_csvs", "data.split_lists", "data.frame_wh",
-    "clips.dev", "clips.test",
-    "detector.model", "detector.prompt", "detector.box_threshold", "detector.nms_iou",
-    "label.real_iou", "label.fake_iou",
+    "run.name", "run.out_root", "run.split", "run.systems", "run.cache_root",
+    "data.root", "data.images_dir", "data.aau_csvs", "data.frame_wh",
+    "splits.dev", "splits.test", "classes",
+    "detector.model", "detector.prompt", "detector.phrase_to_class", "detector.box_threshold", "detector.nms_iou",
+    "label.match_iou", "label.background_iou",
     "evidence.history_frames", "evidence.match_iou",
-    "prompts.context", "prompts.question",
+    "prompts.context", "prompts.question", "prompts.need_vlm_question", "prompts.need_vlm_levels",
     "jev.model", "jev.endpoint", "jev.batching",
     "vlm.model",
-    "gate.max_auto_error",
-    "metrics.ece_bins", "metrics.bootstrap",
+    "gate.primary", "gate.max_auto_error", "gate.need_vlm_grid_step", "gate.conf_grid_step",
+    "metrics.ece_bins", "metrics.bootstrap", "metrics.min_class_n",
     "endpoints.sequential",
     "budget.max_jev_requests", "budget.max_jev_tokens", "budget.max_vlm_calls",
 ]
-KNOWN_SYSTEMS = {"threshold", "vlm", "jev", "gate"}
+KNOWN_SYSTEMS = {"threshold", "vlm", "jev", "gate", "gate_conf", "gate_either"}
+GATE_SYSTEMS = {"gate", "gate_conf", "gate_either"}
+BACKGROUND = "background"
 
 
 class ConfigError(ValueError):
@@ -90,20 +92,32 @@ def validate(cfg: dict) -> None:
         raise ConfigError(f"missing config keys: {missing}")
     if cfg["run"]["split"] not in ("dev", "test"):
         raise ConfigError("run.split must be 'dev' or 'test'")
-    unknown = set(cfg["run"]["systems"]) - KNOWN_SYSTEMS
-    if unknown:
-        raise ConfigError(f"unknown systems: {sorted(unknown)}")
-    if "gate" in cfg["run"]["systems"] and not {"vlm", "jev"} <= set(cfg["run"]["systems"]):
-        raise ConfigError("the gate system needs both 'vlm' and 'jev'")
-    if not cfg["label"]["fake_iou"] <= cfg["label"]["real_iou"]:
-        raise ConfigError("label.fake_iou must be <= label.real_iou")
+    systems = set(cfg["run"]["systems"])
+    if systems - KNOWN_SYSTEMS:
+        raise ConfigError(f"unknown systems: {sorted(systems - KNOWN_SYSTEMS)}")
+    if systems & GATE_SYSTEMS and not {"vlm", "jev"} <= systems:
+        raise ConfigError("gate systems need both 'vlm' and 'jev'")
+    if cfg["gate"]["primary"] not in GATE_SYSTEMS:
+        raise ConfigError(f"gate.primary must be one of {sorted(GATE_SYSTEMS)}")
+    if BACKGROUND not in cfg["classes"]:
+        raise ConfigError("classes must include 'background'")
+    unmapped = set(cfg["detector"]["phrase_to_class"].values()) - set(cfg["classes"])
+    if unmapped:
+        raise ConfigError(f"detector.phrase_to_class maps to unknown classes: {sorted(unmapped)}")
+    if not cfg["label"]["background_iou"] <= cfg["label"]["match_iou"]:
+        raise ConfigError("label.background_iou must be <= label.match_iou")
     if cfg["jev"]["batching"] not in ("per_frame", "per_box"):
         raise ConfigError("jev.batching must be per_frame or per_box")
-    overlap = set(cfg["clips"]["dev"]) & set(cfg["clips"]["test"])
+    overlap = set(cfg["splits"]["dev"]) & set(cfg["splits"]["test"])
     if overlap:
-        raise ConfigError(f"clips appear in both dev and test: {sorted(overlap)}")
+        raise ConfigError(f"split lists appear in both dev and test: {sorted(overlap)}")
     if cfg["run"]["split"] == "test" and not cfg.get("thresholds_file"):
         raise ConfigError("test runs need thresholds_file fitted on dev")
+
+
+def class_names(cfg: dict) -> list[str]:
+    """Ordered judgment classes (six animals, then background)."""
+    return list(cfg["classes"])
 
 
 def load_config(path: str | Path, overrides: list[str] | None = None) -> dict:

@@ -35,16 +35,18 @@ class Budget:
         return {"jev_requests": self.jev_requests, "jev_tokens": self.jev_tokens, "vlm_calls": self.vlm_calls}
 
 
-def decision(cand_id: str, keep: bool, p_real: float | None, latency_ms: float, **extra) -> dict:
-    """One S5 row. Fields required by the data contract come first."""
-    row = {"cand_id": cand_id, "keep": bool(keep), "p_real": p_real, "latency_ms": round(float(latency_ms), 3),
+def decision(cand_id: str, probs: dict[str, float], latency_ms: float, **extra) -> dict:
+    """One S5 row: pred = argmax class, confidence = its probability. Contract fields come first."""
+    pred = max(probs, key=probs.get)
+    row = {"cand_id": cand_id, "pred": pred, "probs": {k: round(float(v), 5) for k, v in probs.items()},
+           "confidence": round(float(probs[pred]), 5), "latency_ms": round(float(latency_ms), 3),
            "tokens_in": 0, "tokens_out": 0}
     row.update(extra)
     return row
 
 
 class Judge(ABC):
-    """A system that decides keep/reject for every candidate box."""
+    """A system that assigns one of the judgment classes to every candidate box."""
 
     name: str
 

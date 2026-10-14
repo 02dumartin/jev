@@ -58,29 +58,30 @@ def track_features(box, history: list[list[dict]], match_iou: float) -> dict:
     }
 
 
-def build_evidence(candidates: list[dict], cfg: dict) -> list[dict]:
-    """One evidence row per candidate, computed clip by clip in frame order."""
+def build_evidence(candidates: list[dict], context_candidates: list[dict], context_keys, cfg: dict) -> list[dict]:
+    """One evidence row per target candidate.
+
+    History = the previous K frame numbers of the same video that the detector processed
+    (`context_keys`, any split), with their candidates (possibly none). Never GT, never later frames.
+    """
     wh = cfg["data"]["frame_wh"]
     k, match_iou = cfg["evidence"]["history_frames"], cfg["evidence"]["match_iou"]
-    by_clip: dict[str, dict[int, list[dict]]] = {}
-    for c in candidates:
-        by_clip.setdefault(c["clip"], {}).setdefault(c["frame_idx"], []).append(c)
+    processed = set(context_keys)
+    by_frame: dict[tuple, list[dict]] = {key: [] for key in processed}
+    for c in context_candidates:
+        by_frame.setdefault((c["clip"], c["frame_idx"]), []).append(c)
 
-    out = {}
-    for frames in by_clip.values():
-        idxs = sorted(frames)
-        for pos, idx in enumerate(idxs):
-            # Previous K frame indices that exist in the clip, most recent first (strictly < idx).
-            prev_idxs = [i for i in idxs[max(0, pos - k):pos]][::-1]
-            history = [frames[i] for i in prev_idxs]
-            current = frames[idx]
-            for c in current:
-                out[c["cand_id"]] = {
-                    "cand_id": c["cand_id"],
-                    "history_frame_idxs": prev_idxs,
-                    "detector": {"label": c["label"], "score": round(c["dino_score"], 3)},
-                    "geometry": geometry(c["box_xyxy"], wh),
-                    "track": track_features(c["box_xyxy"], history, match_iou),
-                    "scene": {"candidates_in_frame": len(current)},
-                }
-    return [out[c["cand_id"]] for c in candidates]
+    out = []
+    for c in candidates:
+        clip, idx = c["clip"], c["frame_idx"]
+        prev_idxs = [i for i in range(idx - 1, idx - k - 1, -1) if (clip, i) in processed]  # most recent first
+        history = [by_frame[(clip, i)] for i in prev_idxs]
+        out.append({
+            "cand_id": c["cand_id"],
+            "history_frame_idxs": prev_idxs,
+            "detector": {"label": c["dino_label"], "score": round(c["dino_score"], 3)},
+            "geometry": geometry(c["box_xyxy"], wh),
+            "track": track_features(c["box_xyxy"], history, match_iou),
+            "scene": {"candidates_in_frame": len(by_frame.get((clip, idx), []))},
+        })
+    return out

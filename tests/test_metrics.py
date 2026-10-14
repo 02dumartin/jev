@@ -1,52 +1,50 @@
+import numpy as np
 import pytest
 
 from jevgate import metrics as M
 
-
-def test_binary_metrics():
-    m = M.binary_metrics([1, 1, 0, 0], [1, 0, 1, 0])
-    assert (m["accuracy"], m["precision"], m["recall"]) == (0.5, 0.5, 0.5)
-    assert M.binary_metrics([0, 0], [0, 0])["precision"] is None
+C = ["fish", "crab", "background"]
 
 
-def test_ece_perfect_and_overconfident():
-    assert M.ece([1, 0, 1, 0], [0.5, 0.5, 0.5, 0.5], 10) == pytest.approx(0.0)
-    assert M.ece([1, 0], [1.0, 1.0], 10) == pytest.approx(0.5)  # says 100% real, half are real
+def test_multiclass_metrics_and_confusion():
+    m = M.multiclass_metrics(["fish", "crab", "background", "crab"], ["fish", "fish", "background", "crab"], C)
+    assert m["accuracy"] == 0.75
+    assert m["per_class"]["crab"]["recall"] == 0.5 and m["per_class"]["fish"]["precision"] == 0.5
+    assert m["confusion"]["matrix"][1] == [1, 1, 0]  # row = y crab
 
 
-def test_ece_p_equal_one_falls_in_last_bin():
-    rows = M.reliability_bins([1], [1.0], 15)
-    assert rows[-1]["count"] == 1
+def test_ovr_counts():
+    o = M.ovr_counts(["fish", "crab", "fish"], ["fish", "fish", "crab"], "fish")
+    assert (o["tp"], o["fn"], o["fp"], o["tn"]) == (1, 1, 1, 0) and o["sens"] == 0.5 and o["spec"] == 0.0
 
 
-def test_brier():
-    assert M.brier([1, 0], [1.0, 0.0]) == 0.0
-    assert M.brier([1, 0], [0.0, 1.0]) == 1.0
+def test_auroc_and_roc():
+    assert M.auroc([1, 1, 0, 0], [0.9, 0.8, 0.2, 0.1]) == 1.0
+    assert M.auroc([1, 0], [0.5, 0.5]) == 0.5
+    assert M.auroc([1, 1], [0.1, 0.2]) is None
+    r = M.roc_points([1, 0, 1, 0], [0.9, 0.8, 0.7, 0.1])
+    assert r["fpr"][0] == 0 and r["tpr"][-1] == 1 and r["fpr"][-1] == 1
+
+
+def test_ece_top_and_brier():
+    assert M.ece_top([1, 0], [0.5, 0.5], 10) == pytest.approx(0.0)
+    assert M.ece_top([1, 0], [1.0, 1.0], 10) == pytest.approx(0.5)
+    assert M.reliability_bins([1], [1.0], 15)[-1]["count"] == 1
+    assert M.brier_multi(["fish"], [{"fish": 1.0, "crab": 0.0, "background": 0.0}], C) == 0.0
+    assert M.brier_multi(["fish"], [{"fish": 0.0, "crab": 1.0, "background": 0.0}], C) == 2.0
 
 
 def test_block_bootstrap_identical_systems_has_zero_delta():
-    keys = [("c", i) for i in range(30)]
-    correct = {k: [1, 0] for k in keys}
-    ci = M.block_bootstrap_delta(keys, correct, correct, 200, 5, 0)
-    assert ci["delta"] == 0 and ci["ci_low"] == 0 and ci["ci_high"] == 0 and ci["n_blocks"] == 6
-
-
-def test_block_bootstrap_blocks_stay_within_clip():
-    keys = [("a", 0), ("a", 1), ("b", 0)]
-    corr = {k: [1] for k in keys}
-    assert M.block_bootstrap_delta(keys, corr, corr, 10, 10, 0)["n_blocks"] == 2
+    frames = [("c", i) for i in range(30) for _ in range(2)]
+    boot = M.BlockBootstrap(frames, 5, 200, 0)
+    c = np.ones(len(frames))
+    assert boot.ci(lambda idx: float(c[idx].mean() - c[idx].mean())) == (0.0, 0.0)
+    assert len(M.frame_blocks([("a", 0), ("a", 1), ("b", 0)], 10)) == 2  # blocks stay within a clip
 
 
 def test_endpoints_stop_at_first_failure():
     steps = [{"min_delta_acc_ci_low": -0.02, "max_vlm_call_ratio": 0.5},
              {"min_delta_acc_ci_low": -0.01, "max_vlm_call_ratio": 0.5},
              {"min_delta_acc_ci_low": -0.01, "max_vlm_call_ratio": 0.3}]
-    res = [r["result"] for r in M.evaluate_endpoints(-0.015, 0.4, steps)]
-    assert res == ["pass", "fail", "not_tested"]
+    assert [r["result"] for r in M.evaluate_endpoints(-0.015, 0.4, steps)] == ["pass", "fail", "not_tested"]
     assert [r["result"] for r in M.evaluate_endpoints(None, 0.4, steps)] == ["not_tested"] * 3
-
-
-def test_auroc():
-    assert M.auroc([1, 1, 0, 0], [0.9, 0.8, 0.2, 0.1]) == 1.0
-    assert M.auroc([1, 0], [0.5, 0.5]) == 0.5
-    assert M.auroc([1, 1], [0.1, 0.2]) is None

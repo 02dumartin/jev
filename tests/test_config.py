@@ -6,8 +6,8 @@ from jevgate.config import ConfigError, deep_merge, load_config, parse_overrides
 
 def test_smoke_inherits_base():
     cfg = load_config(REPO / "configs" / "smoke.yaml")
-    assert cfg["run"]["name"] == "smoke" and cfg["run"]["max_frames_per_clip"] == 5
-    assert cfg["detector"]["model"] == "IDEA-Research/grounding-dino-base"
+    assert cfg["run"]["name"] == "smoke" and cfg["run"]["max_frames"] == 12
+    assert list(cfg["classes"])[-1] == "background" and len(cfg["classes"]) == 7
 
 
 def test_overrides_and_merge():
@@ -21,11 +21,9 @@ def test_test_split_requires_dev_thresholds():
     assert load_config(REPO / "configs" / "test.yaml")["thresholds_file"] == "thresholds.yaml"
 
 
-def test_rejects_overlapping_clips_and_bad_bands():
-    with pytest.raises(ConfigError):
-        load_config(REPO / "configs" / "base.yaml",
-                    ["clips.test=[2019-03-19_17-02-30to2019-03-19_17-02-42_1]"])
-    with pytest.raises(ConfigError):
-        load_config(REPO / "configs" / "base.yaml", ["label.fake_iou=0.7"])
-    with pytest.raises(ConfigError):
-        load_config(REPO / "configs" / "base.yaml", ["run.systems=[threshold, gate]"])
+def test_rejects_bad_settings():
+    base = REPO / "configs" / "base.yaml"
+    for bad in (["splits.test=[valid.txt]"], ["label.background_iou=0.7"], ["run.systems=[threshold, gate]"],
+                ["gate.primary=jev"], ["detector.phrase_to_class={fish: eel}"]):
+        with pytest.raises(ConfigError):
+            load_config(base, bad)

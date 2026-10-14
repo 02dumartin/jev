@@ -4,9 +4,10 @@
 run:
   name: dev                 # run folder = runs/<YYMMDD>_<name>
   out_root: runs
-  split: dev                # which clip split to process: dev | test
-  max_frames_per_clip: null # null = all frames; smoke uses a small number
-  systems: [threshold, vlm, jev, gate]
+  split: dev                # dev = original train + valid frames, test = original test frames
+  max_frames: null          # null = every frame of the split; smoke takes this many, evenly spaced
+  systems: [threshold, vlm, jev, gate, gate_conf, gate_either]
+  cache_root: runs/_cache   # detector outputs shared across runs (keyed by detector + data config)
 
 data:
   root: data/brackish-dataset
@@ -15,73 +16,97 @@ data:
     - annotations/annotations_AAU/train.csv
     - annotations/annotations_AAU/valid.csv
     - annotations/annotations_AAU/test.csv
-  split_lists: [train.txt, valid.txt, test.txt]
   frame_wh: [960, 540]
 
-# Fixed before any result was seen (PLAN.md §2.3). Changing these triggers the jev-loop intent check.
-clips:
-  dev:
-    - 2019-03-19_17-02-30to2019-03-19_17-02-42_1
-  test:
-    - 2019-03-21_05-01-24to2019-03-21_05-01-31_1
-    - 2019-03-19_19-30-33to2019-03-19_19-30-45_1
+# Original Brackish split lists (frame-level random split; every video appears in both). PLAN.md §2.3.
+splits:
+  dev: [train.txt, valid.txt]
+  test: [test.txt]
+
+# Judgment classes. The first six are the AAU tags; background = no animal in the box.
+# The same descriptions go to the VLM (options A-G) and to Jev (choice criteria).
+classes:
+  fish: "a large fish swimming in open water"
+  small_fish: "a small fish, often one of a school"
+  crab: "a crab, usually on or near the seabed"
+  shrimp: "a shrimp, small and slender, often near the bottom"
+  jellyfish: "a jellyfish, translucent and drifting"
+  starfish: "a starfish lying on the seabed"
+  background: "no animal: turbidity, floating particles, bubbles, seabed texture, or the camera frame"
 
 detector:
   model: IDEA-Research/grounding-dino-base
-  prompt: "fish . crab . shrimp . jellyfish . starfish ."
-  box_threshold: 0.15
-  text_threshold: 0.15
+  prompt: "fish . small fish . crab . shrimp . jellyfish . starfish ."
+  phrase_to_class: {fish: fish, small fish: small_fish, crab: crab, shrimp: shrimp,
+                    jellyfish: jellyfish, starfish: starfish}
+  box_threshold: 0.25       # dev smoke: 0.15 -> 0.25 keeps 19/20 animal boxes and drops ~75% of background ones
+  text_threshold: 0.25
   nms_iou: 0.5
   max_candidates_per_frame: 30
   max_box_area_frac: 0.5     # drop near-full-frame boxes (whole-scene detections)
-  batch_size: 8
+  batch_size: 16
   device: cuda:0
 
 label:
-  real_iou: 0.5              # max IoU with GT >= real_iou  -> y = 1
-  fake_iou: 0.3              # max IoU with GT <  fake_iou  -> y = 0; in between -> ambiguous (y = null)
+  match_iou: 0.5             # max IoU with GT >= match_iou -> y = matched GT class
+  background_iou: 0.3        # max IoU with GT <  background_iou -> y = background; in between -> ambiguous
 
 evidence:
-  history_frames: 5          # causal window: only the previous K frames
+  history_frames: 5          # causal window: the previous K frame numbers of the same video
   match_iou: 0.3             # IoU to link a box to a previous-frame candidate
 
 prompts:
   context: >-
-    Fixed underwater camera in turbid brackish water (960x540 video). A zero-shot object detector
-    proposed a candidate box. Expected animals: fish, small fish, crab, shrimp, jellyfish, starfish.
-    False candidates are usually turbidity, floating particles, bubbles, seabed texture, or the
-    camera frame.
-  question: "Is there a real marine animal inside this candidate box?"
+    Fixed underwater camera in turbid brackish water (960x540 video). A zero-shot object detector,
+    run with a low score threshold, proposed candidate boxes, so many candidates contain no animal
+    (turbidity, particles, bubbles, seabed texture, camera frame). Real animals are often faint,
+    blurry or cut off at the frame border: fish and small fish in the water column, crabs, shrimp
+    and starfish on or near the seabed, jellyfish drifting. Each candidate shows the detector's
+    proposed class and score; the detector's class can be wrong.
+  question: "What is inside this candidate box?"
+  need_vlm_question: >-
+    How much would looking at the image itself be needed to be sure of the class of this candidate
+    box, given only the evidence in the state?
+  need_vlm_levels:
+    - "1: the evidence alone is decisive; no image check needed"
+    - "2: fairly sure from the evidence; an image check is unlikely to change the answer"
+    - "3: unsure; an image check could change the answer"
+    - "4: probably needs an image check"
+    - "5: cannot decide without looking at the image"
 
 jev:
   model: jev-latest
   endpoint: https://api.typesafe.ai/v1/systemone
   api_key_env: TYPESAFE_API_KEY
-  batching: per_frame        # per_frame: one request per frame, one Noul question per box | per_box
-  timeout_s: 30
-  max_retries: 3
-  max_concurrency: 8
+  batching: per_frame        # per_frame: one request per frame, two questions per box | per_box
+  timeout_s: 60
+  max_retries: 4
+  max_concurrency: 16
 
 vlm:
   model: Qwen/Qwen3-VL-8B-Instruct
   dtype: bfloat16
   device: cuda:0
-  batch_size: 16
+  batch_size: 32
   crop_context: 1.0          # crop = box expanded by this fraction of its size on each side
   crop_long_side: 336        # crop is resized so its longer side has this many pixels
+  show_detector_hint: true   # tell the VLM the detector's proposed class and score (Jev sees them too)
   box_color: [255, 0, 0]
   box_width: 3
 
 gate:
-  max_auto_error: 0.05       # tau = smallest value whose dev auto-handled error <= this
-  tau_grid_step: 0.01
+  primary: gate              # pre-registered primary gate: route when Jev need_vlm level >= tau_e
+  max_auto_error: 0.05       # every tau is the setting with the most auto-handled boxes whose dev error <= this
+  need_vlm_grid_step: 0.05   # tau_e grid over the 1-5 need_vlm level
+  conf_grid_step: 0.01       # tau_c grid over Jev top-class probability
 
 thresholds_file: null        # test runs must point to a dev-fitted thresholds.yaml
 
 metrics:
   ece_bins: 15
+  min_class_n: 20            # class panels with fewer scored boxes are greyed out
   bootstrap:
-    n: 2000
+    n: 1000
     block_frames: 10         # consecutive frames per resampling block (frames are not independent)
     seed: 0
   regression_tol: 0.01
@@ -93,10 +118,14 @@ endpoints:
     - {name: stricter_acc, min_delta_acc_ci_low: -0.01, max_vlm_call_ratio: 0.5}
     - {name: stricter_calls, min_delta_acc_ci_low: -0.01, max_vlm_call_ratio: 0.3}
 
+viz:
+  sample_frames: 12          # random frames rendered as per-system overlays
+  seed: 0
+
 budget:
-  max_jev_requests: 3000
-  max_jev_tokens: 3000000
-  max_vlm_calls: 20000
+  max_jev_requests: 16000
+  max_jev_tokens: 60000000
+  max_vlm_calls: 120000
 
 cost:
   jev_usd_per_1m_tokens: null  # unknown; fill from the TypeSafe console
