@@ -1,0 +1,21 @@
+# YOLO12 detector trained on a video-level split of Brackish (PLAN.md v5).
+inherit: base.yaml
+
+video_split:
+  file: splits/video_split.yaml     # committed; created once by scripts/make_video_split.py
+  fractions: {train: 0.70, val: 0.15, test: 0.15}
+  min_boxes_per_class: 20           # val and test must each hold at least this many boxes of every class
+  trials: 20000
+  seed: 0
+
+yolo:
+  dataset_dir: data/yolo_brackish   # images are symlinks; labels converted from AAU (class 0-5, normalised xywh)
+  model: yolo12s.pt                 # COCO-pretrained weights, Ultralytics default training settings below
+  project: train                    # training outputs: train/<name>/ (weights, results.csv, plots)
+  name: yolo12s_video
+  epochs: 100
+  imgsz: 640
+  batch: 16
+  device: 4
+  seed: 0
+  workers: 8

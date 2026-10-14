@@ -18,6 +18,7 @@ dependencies = [
     "httpx[http2]>=0.27",
     "python-dotenv>=1.0",
     "tqdm>=4.66",
+    "ultralytics>=8.4.177",
 ]
 
 [dependency-groups]
@@ -29,6 +30,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jevgate"]
+
+[tool.uv]
+# ultralytics pulls the GUI build of OpenCV (needs libGL); this server uses the headless build only.
+override-dependencies = ["opencv-python; sys_platform == 'never'"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
