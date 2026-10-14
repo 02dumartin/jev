@@ -90,3 +90,59 @@ def convergence(rows: list[dict], window: int = 10) -> dict:
         "val_loss_trend": "down" if val_loss[-1] < val_loss[-min(window, len(val_loss))] else "up",
         "val_loss_min_epoch": min(range(len(val_loss)), key=val_loss.__getitem__) + 1,
     }
+
+
+def evaluate_split(cfg: dict, repo: Path, split: str, weights: Path) -> dict:
+    """Ultralytics validation of `weights` on one split; plots go to train/<name>/<split>_eval/."""
+    from ultralytics import YOLO
+
+    y = cfg["yolo"]
+    run_dir = repo / y["project"] / y["name"]
+    res = YOLO(str(weights)).val(data=str(repo / y["dataset_dir"] / "data.yaml"), split=split, imgsz=y["imgsz"],
+                                 batch=y["batch"], device=y["device"], project=str(run_dir), name=f"{split}_eval",
+                                 exist_ok=True, plots=True, verbose=False)
+    names = res.names
+    per_class = {}
+    for i, c in enumerate(res.ap_class_index):
+        p, r, ap50, ap = res.box.class_result(i)
+        per_class[names[int(c)]] = {"precision": float(p), "recall": float(r), "ap50": float(ap50),
+                                    "ap50_95": float(ap)}
+    return {"split": split, "weights": str(weights.relative_to(repo)),
+            "precision": float(res.box.mp), "recall": float(res.box.mr), "map50": float(res.box.map50),
+            "map50_95": float(res.box.map), "per_class": per_class,
+            "speed_ms_per_image": {k: float(v) for k, v in res.speed.items()}}
+
+
+def training_report(run_dir: Path, conv: dict, evals: list[dict], counts: dict | None = None) -> str:
+    """train/<name>/README.md: convergence, per-split detector metrics, and a guide to the files."""
+    def f(v):
+        return f"{v:.3f}"
+
+    train_trend = ", ".join(f"{k.split('/')[1]} {v}" for k, v in conv["train_loss_trend"].items())
+    lines = [f"# {run_dir.name}", "",
+             "YOLO12s, COCO-pretrained, Ultralytics default settings, trained on the video-level split "
+             "(`splits/video_split.yaml`).", "",
+             "## Convergence", "",
+             f"- epochs {conv['epochs_done']}, best epoch **{conv['best_epoch']}** "
+             f"(val mAP50-95 {f(conv['best_map50_95'])}), "
+             f"last epoch mAP50 {f(conv['last_map50'])} / mAP50-95 {f(conv['last_map50_95'])}",
+             f"- train losses: {train_trend}; val loss lowest at epoch {conv['val_loss_min_epoch']}, "
+             f"trend over the last 10 epochs: {conv['val_loss_trend']}",
+             "- ![progress](progress.png)", ""]
+    for e in evals:
+        lines += [f"## {e['split']} (`{e['weights']}`)", "",
+                  f"P {f(e['precision'])} · R {f(e['recall'])} · mAP50 **{f(e['map50'])}** · "
+                  f"mAP50-95 **{f(e['map50_95'])}** · "
+                  f"inference {e['speed_ms_per_image'].get('inference', 0):.1f} ms/image", "",
+                  "| class | precision | recall | AP50 | AP50-95 |", "|---|---|---|---|---|"]
+        lines += [f"| {c} | {f(v['precision'])} | {f(v['recall'])} | {f(v['ap50'])} | {f(v['ap50_95'])} |"
+                  for c, v in e["per_class"].items()]
+        lines += ["", f"![confusion]({e['split']}_eval/confusion_matrix_normalized.png)", ""]
+    lines += ["## Files", "",
+              "| file | content |", "|---|---|",
+              "| `weights/best.pt` | weights of the best val epoch (used downstream) |",
+              "| `results.csv`, `results.png` | Ultralytics per-epoch losses and val metrics |",
+              "| `progress.json`, `progress.png` | convergence summary (best epoch, recent slope, loss trends) |",
+              "| `<split>_eval/` | confusion matrix and PR curves on that split |",
+              "| `args.yaml` | full training arguments |"]
+    return "\n".join(lines) + "\n"
