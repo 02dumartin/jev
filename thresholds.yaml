@@ -1,0 +1,11 @@
+t: 0.4327
+fit_split: dev
+fit_splits:
+- train.txt
+- valid.txt
+fit_run: 261014_dev
+fit_commit: d728d05
+max_frames: null
+tau_need_vlm: 3.2
+tau_conf: 1.01
+max_auto_error: 0.05
