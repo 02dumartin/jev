@@ -5,8 +5,9 @@ Right, top:    VLM only: the VLM answers the questions itself -> time, plain ans
 Right, bottom: VLM + Jev: the VLM describes, Jev answers every question in one request -> time, 3x2 cards, act.
 Text never gets cut: every label is wrapped to its box width.
 
-Timing is replayed as measured, t = seconds since the clip started playing. The description is shown with the clip
-from the start; the VLM-only answers appear at their VLM time and Jev's cards at the Jev time (red stopwatches).
+Timing is replayed as measured, t = seconds since the clip finished playing (negative while it plays). The description
+is shown with the clip; after the clip the VLM-only answers appear at their VLM time and Jev's cards at the Jev time,
+so the two results arrive in time order (red stopwatches).
 """
 
 from pathlib import Path
@@ -143,9 +144,10 @@ class Dashboard:
         running = vo is not None
         y = self.panel(d, box, "VLM only  ·  the VLM looks and answers every question itself",
                        f"{n_q} questions, one generation" if running else None,
-                       min(t, vo["vlm_s"]) if running else None)
+                       min(max(t, 0.0), vo["vlm_s"]) if running else None)
         if not running or t < vo["vlm_s"]:
-            d.text((x0 + 18, y), "VLM answering …", font=self.f["b"], fill=self.c["muted"])
+            d.text((x0 + 18, y), "VLM answering …" if t >= 0 else "waiting for the clip to end …", font=self.f["b"],
+                   fill=self.c["muted"])
             self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
             return
         cols, colw = 3, (x1 - x0 - 36) / 3
@@ -184,9 +186,10 @@ class Dashboard:
         x0, y0, x1, y1 = box
         title = "VLM + Jev  ·  the VLM describes, Jev answers all in one request"
         jev_s = dec["latency_ms"] / 1000
-        y = self.panel(d, box, title, "Jev only", min(t, jev_s))
+        y = self.panel(d, box, title, "Jev only", min(max(t, 0.0), jev_s))
         if t < jev_s:
-            d.text((x0 + 18, y), "Jev answering all questions in one request …", font=self.f["b"], fill=self.c["muted"])
+            msg = "Jev answering all questions in one request …" if t >= 0 else "waiting for the clip to end …"
+            d.text((x0 + 18, y), msg, font=self.f["b"], fill=self.c["muted"])
             self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
             return
         note = f"Time = Jev only; the VLM description ({state['vlm_s']:.1f} s, left) is not included."
@@ -203,7 +206,7 @@ class Dashboard:
 
     # whole frame ----------------------------------------------------------------------------
     def frame(self, img, meta, cur, clip_no, n_clips, state, dec_all: dict, t: float) -> np.ndarray:
-        """t = seconds since the clip started playing."""
+        """t = seconds since the clip finished playing (negative while it plays)."""
         canvas = Image.new("RGB", (self.W, self.H), self.c["background"])
         d = ImageDraw.Draw(canvas)
         d.text((30, 18), self.r["title"], font=self.f["title"], fill=self.c["title"])
@@ -217,18 +220,18 @@ class Dashboard:
         return np.asarray(canvas)
 
     def finish_s(self, state: dict, dec_all: dict) -> float:
-        """When the slower path has its answer (seconds after the clip starts)."""
+        """When the slower path has its answer (seconds after the clip ends)."""
         return max(dec_all.get("vlm_only", {}).get("vlm_s", 0.0), dec_all["dec"]["latency_ms"] / 1000)
 
 
 def render_clip(dash: Dashboard, writer, frames: list[np.ndarray], meta: dict, clip_no: int, n_clips: int,
                 state: dict, dec_all: dict) -> None:
-    """Play the clip at video_fps with the clock running from its first frame; results appear at their measured
-    times while it plays. After the last clip frame (or the slower result) the final screen is held."""
+    """Play the clip at video_fps; when it ends the clock starts and each result appears at its measured time.
+    The final screen is held for hold_s after the slower result."""
     out_fps, clip_fps = dash.r["video_fps"], dash.r["fps"]
     play_s = len(frames) / clip_fps
-    total = max(play_s, dash.finish_s(state, dec_all)) + dash.r["hold_s"]
+    total = play_s + dash.finish_s(state, dec_all) + dash.r["hold_s"]
     for k in range(int(np.ceil(total * out_fps))):
-        t = k / out_fps
-        i = min(int(t * clip_fps), len(frames) - 1)
-        writer.send(dash.frame(frames[i], meta, i + 1, clip_no, n_clips, state, dec_all, t))
+        clock = k / out_fps
+        i = min(int(clock * clip_fps), len(frames) - 1)
+        writer.send(dash.frame(frames[i], meta, i + 1, clip_no, n_clips, state, dec_all, clock - play_s))
