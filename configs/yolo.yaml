@@ -24,3 +24,13 @@ yolo:
   patience: 100                     # Ultralytics default (no early stop within 100 epochs)
   freeze: null                      # number of leading layers kept frozen; null = train everything
   note: ""
+
+# Video rendering with multi-object tracking on held-out videos (scripts/track_yolo.py).
+track:
+  split: test                       # which videos of splits/video_split.yaml to render
+  weights: best.pt                  # train/<yolo.name>/weights/<this>
+  tracker: bytetrack.yaml           # Ultralytics tracker config (bytetrack.yaml | botsort.yaml)
+  conf: 0.25                        # detection confidence floor, same for detect-only and tracked panels
+  iou: 0.7                          # NMS IoU
+  fps: 15                           # output video frame rate (Brackish frames were extracted at 15 fps)
+  out_dir: tracks                   # train/<yolo.name>/<out_dir>/
