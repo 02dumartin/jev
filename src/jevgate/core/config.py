@@ -13,13 +13,13 @@ REQUIRED_KEYS = [
     "video_split.file", "video_split.run_split_to_video_split", "classes", "not_an_animal",
     "track.weights", "track.tracker", "track.conf", "track.iou", "track.imgsz", "track.device",
     "label.match_iou", "label.background_iou", "label.track_ok_share",
-    "prompts.context", "prompts.question", "prompts.true_means", "prompts.false_means", "prompts.class_fix_question",
+    "prompts.context", "prompts.question", "prompts.true_means", "prompts.false_means", "prompts.describe",
     "jev.model", "jev.endpoint", "jev.max_tracks_per_request",
-    "vlm.model", "gate.max_auto_error", "gate.tau_grid_step",
+    "describer.model", "describer.max_new_tokens", "vlm.model", "gate.max_auto_error", "gate.tau_grid_step",
     "metrics.ece_bins", "metrics.bootstrap", "endpoints.primary_pair", "endpoints.sequential",
     "budget.max_jev_requests", "budget.max_jev_tokens", "budget.max_vlm_calls",
 ]
-KNOWN_SYSTEMS = ("yolo", "track_vote", "vlm_all", "jev", "gate")
+KNOWN_SYSTEMS = ("yolo", "track_vote", "vlm_all", "small_vlm", "jev", "gate", "gate_small")
 BACKGROUND = "background"
 
 
@@ -93,6 +93,8 @@ def validate(cfg: dict) -> None:
         raise ConfigError(f"unknown systems: {sorted(systems - set(KNOWN_SYSTEMS))}")
     if "gate" in systems and not {"vlm_all", "jev"} <= systems:
         raise ConfigError("the gate system needs both 'vlm_all' and 'jev'")
+    if "gate_small" in systems and not {"vlm_all", "small_vlm"} <= systems:
+        raise ConfigError("the gate_small system needs both 'vlm_all' and 'small_vlm'")
     if not set(cfg["endpoints"]["primary_pair"]) <= systems:
         raise ConfigError("endpoints.primary_pair must be run systems")
     if BACKGROUND in cfg["classes"]:

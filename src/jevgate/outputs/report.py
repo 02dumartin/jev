@@ -1,4 +1,4 @@
-"""evaluation/tables/metrics.md, errors.csv and the run README.md (PLAN.md v6 §6-7)."""
+"""evaluation/tables/metrics.md, errors.csv and the run README.md (PLAN.md v7 §5-6)."""
 
 import csv
 from pathlib import Path
@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 
 from jevgate.outputs.plots import TITLES
+
+THRESHOLD_KEYS = ("t", "v", "v_small", "tau", "small_lo", "small_hi")
 
 
 def _f(v, digits=3):
@@ -38,8 +40,9 @@ def metrics_md(m: dict) -> str:
              f"(scored {n['boxes_scored']}, ambiguous {n['boxes_ambiguous']}, unknown GT {n['boxes_unknown_gt']}) · "
              f"tracks {n['tracks']} (scored {n['tracks_scored']}: {n['track_types']}) · "
              f"untracked boxes {n['untracked_boxes']} (real animals among them {n['untracked_real_animals']})", "",
-             f"Thresholds (dev): t = {_f(m['thresholds'].get('t'))}, v = {_f(m['thresholds'].get('v'), 5)}, "
-             f"tau = {_f(m['thresholds'].get('tau'), 2)}", "", "## Box level (7-way: six animals + background)", ""]
+             "Thresholds (dev): " + ", ".join(f"{k} = {m['thresholds'][k]:.5g}" for k in THRESHOLD_KEYS
+                                             if k in m["thresholds"]),
+             "", "## Box level (7-way: six animals + background)", ""]
     lines += results_table(m)
     mo = m["missed_objects"]
     lines += ["", f"Detector recall upper bound: {_f(mo['recall_upper_bound'])} "
@@ -53,16 +56,23 @@ def metrics_md(m: dict) -> str:
                   f"VLM call ratio {_f(p['call_ratio'])}", ""]
         lines += [f"- {e['name']}: CI low ≥ {e['min_delta_acc_ci_low']}, ratio ≤ {e['max_vlm_call_ratio']} → "
                   f"**{e['result']}**" for e in m["endpoints"]]
-        g = m["systems"].get("gate", {})
-        lines += ["", f"Gate: Jev handled {_f(g.get('auto_rate'))} of tracks, "
-                  f"error on them {_f(g.get('auto_error'))}", ""]
+        for name in ("gate", "gate_small"):
+            g = m["systems"].get(name)
+            if g:
+                lines.append(f"- {TITLES[name]}: handled alone {_f(g.get('auto_rate'))} of tracks, "
+                             f"error on them {_f(g.get('auto_error'))}, large-VLM calls {g['vlm_calls']}")
+        sg = m.get("gate_secondary")
+        if sg and sg.get("delta_acc"):
+            d = sg["delta_acc"]
+            lines.append(f"- S1 small-VLM gate: Δacc vs ③ {d['delta']:+.4f} [{_f(d['ci_low'], 4)}, "
+                         f"{_f(d['ci_high'], 4)}], call ratio {_f(sg['call_ratio'])}")
+        lines.append("")
     lines += ["## Track level", ""]
-    for k in ("auroc_jev_p_ok", "auroc_vlm_p_yes", "auroc_mean_conf"):
+    for k in ("auroc_jev_p_ok", "auroc_vlm_p_yes", "auroc_small_p_yes", "auroc_mean_conf"):
         if k in tl:
             a = tl[k]
             lines.append(f"- {k[6:]}: AUROC {_f(a['auc'])} [{_f(a['ci_low'])}, {_f(a['ci_high'])}]")
-    lines += [f"- Jev ECE {_f(tl.get('jev_ece'))}, Brier {_f(tl.get('jev_brier'))}",
-              f"- class_fix (exploratory): {tl.get('class_fix', {})}", "",
+    lines += [f"- Jev ECE {_f(tl.get('jev_ece'))}, Brier {_f(tl.get('jev_brier'))}", "",
               "## Flicker (frame-to-frame change in shown boxes, mean over videos)", "",
               " · ".join(f"{s} {_f(r['flicker'])}" for s, r in m["systems"].items()), "",
               f"Sensitivity, ambiguous as background: {m['sensitivity']['ambiguous_as_background']}", "",
@@ -70,21 +80,24 @@ def metrics_md(m: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_errors(path: Path, tracks: list[dict], track_labels: dict, jev: dict, vlm: dict, gate_rows: list[dict]):
-    """Tracks the primary gate got wrong, with every judge's score and the VLM images."""
-    gate = {r["track_uid"]: r for r in gate_rows}
+def write_errors(path: Path, tracks: list[dict], track_labels: dict, data) -> None:
+    """Tracks the primary gate got wrong, with every judge's score, the description and the input images."""
+    gate = {r["track_uid"]: r for r in data.gate_rows}
     with path.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["track_uid", "video", "first_frame", "last_frame", "majority_class", "type", "y_votes",
-                    "jev_p_ok", "vlm_p_yes", "routed_to", "gate_accept", "vlm_frame_image"])
+                    "jev_p_ok", "large_vlm_p_yes", "small_vlm_p_yes", "routed_to", "gate_accept", "description",
+                    "image"])
         for t in tracks:
-            lab, g = track_labels[t["track_uid"]], gate.get(t["track_uid"])
+            uid = t["track_uid"]
+            lab, g = track_labels[uid], gate.get(uid)
             if lab["y_track"] is None or g is None or g["accept"] == bool(lab["y_track"]):
                 continue
-            uid = t["track_uid"]
+            small = data.small.get(uid, {})
             w.writerow([uid, t["video"], t["first_frame"], t["last_frame"], t["majority_class"], lab["type"],
-                        lab["y_votes"], jev[uid]["p_ok"], vlm[uid]["p_yes"], g["routed_to"], g["accept"],
-                        f"vlm/input/images/{uid.replace('#', '_')}_frame.jpg"])
+                        lab["y_votes"], data.jev[uid]["p_ok"], data.vlm[uid]["p_yes"], small.get("p_yes"),
+                        g["routed_to"], g["accept"], small.get("description"),
+                        f"describer/input/images/{uid.replace('#', '_')}_frame.jpg"])
 
 
 def readme(run_id: str, m: dict) -> str:
@@ -94,11 +107,13 @@ def readme(run_id: str, m: dict) -> str:
              "| `data/` | links to the images, AAU annotations and the video split |",
              "| `yolo/input/` | `weights.pt` (link), `videos.txt` · `yolo/output/` detections and track summaries |",
              "| `jev/input/requests.jsonl` | exact request bodies · `jev/output/` raw responses and per-track p_ok |",
-             "| `vlm/input/` | prompts and the two images per track · `vlm/output/` per-track p_yes |",
+             "| `describer/input/` | prompts and the two images per track (shared with vlm) · "
+             "`describer/output/` description + small-VLM p_yes |",
+             "| `vlm/input/prompts.jsonl` | large-VLM prompts · `vlm/output/` per-track p_yes |",
              "| `evaluation/labels/` | y per box and per track |",
              "| `evaluation/tables/` | metrics.json, this table, errors.csv, thresholds.yaml / endpoints.json |",
              "| `evaluation/confusion/`, `plots/` | confusion matrices, ROC, reliability, tau curve |",
-             "| `evaluation/viz/`, `videos/` | sample frames (①②③⑤), per video ① vs ⑤ |",
-             "", "Box colours: green = right class, yellow = wrong animal, red = kept without an animal, "
-             "orange = animal dropped, white thin = GT."]
+             "| `evaluation/viz/`, `videos/` | sample frames (①②③⑥), per video GT vs ⑥ |",
+             "", "Box colour = label (viz.class_colors); solid = right, x = wrong class, dashed = no animal, "
+             "dotted = missed animal."]
     return f"# {run_id}\n\n" + metrics_md(m).split("\n", 1)[1] + "\n".join(files) + "\n"

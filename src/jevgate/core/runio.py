@@ -4,8 +4,9 @@ runs/<run_id>/
 ├── README.md, run.yaml
 ├── data/                 symlinks: images, annotations, video_split.yaml
 ├── yolo/{input,output}/  weights.pt + tracker.yaml (links), videos.txt | detections.jsonl, tracks.jsonl
+├── describer/{input,output}/  prompts.jsonl, images/ (shared with vlm) | decisions.jsonl
 ├── jev/{input,output}/   requests.jsonl | responses.jsonl, decisions.jsonl
-├── vlm/{input,output}/   prompts.jsonl, images/ | decisions.jsonl
+├── vlm/{input,output}/   prompts.jsonl | decisions.jsonl
 └── evaluation/           labels/, judgments.jsonl, tables/, confusion/, plots/, viz/, videos/
 """
 
@@ -23,6 +24,8 @@ FILES = {
     "videos": "yolo/input/videos.txt",
     "detections": "yolo/output/detections.jsonl",
     "tracks": "yolo/output/tracks.jsonl",
+    "describer_prompts": "describer/input/prompts.jsonl",
+    "describer": "describer/output/decisions.jsonl",
     "jev_requests": "jev/input/requests.jsonl",
     "jev_responses": "jev/output/responses.jsonl",
     "jev": "jev/output/decisions.jsonl",
@@ -39,7 +42,7 @@ FILES = {
     "endpoints": "evaluation/tables/endpoints.json",
 }
 DIRS = {
-    "vlm_images": "vlm/input/images",
+    "track_images": "describer/input/images",
     "confusion": "evaluation/confusion",
     "plots": "evaluation/plots",
     "viz": "evaluation/viz",

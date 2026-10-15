@@ -1,4 +1,4 @@
-# Base config (PLAN.md v6). Every value that changes a result lives here.
+# Base config (PLAN.md v7). Every value that changes a result lives here.
 # Child configs set `inherit: base.yaml` and override only what differs.
 
 run:
@@ -7,7 +7,7 @@ run:
   split: dev                # dev = val videos of the video split, test = test videos
   max_videos: null          # smoke: the first N videos of the split
   max_frames_per_video: null
-  systems: [yolo, track_vote, vlm_all, jev, gate]
+  systems: [yolo, track_vote, vlm_all, small_vlm, jev, gate, gate_small]
 
 data:
   root: data/brackish-dataset
@@ -84,19 +84,30 @@ prompts:
   question: "Is this track a real {cls}?"          # {cls} = the track's majority class
   true_means: "the boxes show a real {cls}"
   false_means: "the boxes show another animal or no animal"
-  class_fix_question: "Which animal does this track show, if any?"
+  describe: >-
+    Describe only what is inside the red box in one or two short sentences: is there an animal, and if
+    so what does it look like (shape, size, colour, texture)? Say so if it is blurry or unclear.
 
 jev:
   model: jev-latest
   endpoint: https://api.typesafe.ai/v1/systemone
   api_key_env: TYPESAFE_API_KEY
-  max_tracks_per_request: 20       # tracks of one video share a request; each track adds two questions
+  max_tracks_per_request: 20       # tracks of one video share a request; one track_ok question per track
   timeout_s: 60
   max_retries: 4
   max_concurrency: 8
   include_detector_reliability: false   # exploratory: add YOLO's per-class dev precision/recall to the state
   detector_reliability_file: train/yolo12s_video/eval.json
 
+# Small VLM that looks at each track and writes what it sees (text for Jev) + its own Yes probability.
+describer:
+  model: Qwen/Qwen3-VL-4B-Instruct
+  dtype: bfloat16
+  device: cuda:0
+  batch_size: 16
+  max_new_tokens: 60
+
+# Large VLM (verifier): the reference that sees every track (③) and takes the tracks a gate routes.
 vlm:
   model: Qwen/Qwen3-VL-8B-Instruct
   dtype: bfloat16
@@ -108,7 +119,7 @@ vlm:
   box_width: 3
 
 gate:
-  max_auto_error: 0.05              # tau = most Jev-handled tracks whose dev error <= this
+  max_auto_error: 0.05              # every gate threshold: most auto-handled tracks whose dev error <= this
   tau_grid_step: 0.01
 
 thresholds_file: null               # test runs point to the dev-fitted thresholds.yaml

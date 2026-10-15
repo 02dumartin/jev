@@ -1,7 +1,7 @@
 import pytest
 
 from jevgate.judges.base import Budget, BudgetExceeded
-from jevgate.judges.jev import JevError, build_request, question_keys, validate_choice, validate_noul
+from jevgate.judges.jev import JevError, build_request, question_key, validate_choice, validate_noul
 
 
 def test_validate_noul():
@@ -23,13 +23,19 @@ def _track(uid, cls="crab"):
 
 
 def test_request_shares_state_and_hides_ids(cfg):
-    body = build_request(cfg, [_track("0319-1#4"), _track("0319-1#9", "fish")])
-    assert set(body["state"]["tracks"]) == {"T1", "T2"}
+    desc = {"0319-1#4": "a blurry pale shape", "0319-1#9": "a fish with a forked tail"}
+    body = build_request(cfg, [_track("0319-1#4"), _track("0319-1#9", "fish")], desc)
+    tracks = body["state"]["tracks"]
+    assert set(tracks) == {"T1", "T2"} and tracks["T2"]["visual_description"] == "a fish with a forked tail"
     assert "secret-video" not in str(body["state"]) and "#4" not in str(body["state"])
-    q_ok, q_fix = question_keys("0319-1#9")
-    assert body["questions"][q_ok]["type"] == "noul"
-    assert body["questions"][q_ok]["instructions"]["question"] == "Is this track a real fish?"
-    assert "not_an_animal" in body["questions"][q_fix]["criteria"]
+    q = body["questions"][question_key("0319-1#9")]
+    assert q["type"] == "noul" and q["instructions"]["question"] == "Is this track a real fish?"
+    assert len(body["questions"]) == 2
+
+
+def test_request_without_descriptions_has_no_visual_field(cfg):
+    body = build_request(cfg, [_track("a#1")])
+    assert "visual_description" not in body["state"]["tracks"]["T1"]
 
 
 def test_budget_stops_requests(cfg):

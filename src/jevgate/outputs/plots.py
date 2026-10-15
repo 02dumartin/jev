@@ -16,10 +16,11 @@ import numpy as np  # noqa: E402
 
 from jevgate.outputs.colors import class_colors  # noqa: E402
 
-TITLES = {"yolo": "① YOLO (per frame)", "track_vote": "② track majority", "vlm_all": "③ VLM on every track",
-          "jev": "④ Jev", "gate": "⑤ Jev gate → VLM"}
-SCORES = {"jev_p_ok": ("Jev p_ok", "#4C78A8", "-"), "vlm_p_yes": ("VLM p_yes", "#E45756", "--"),
-          "mean_conf": ("YOLO mean conf", "#888888", ":")}
+TITLES = {"yolo": "① YOLO (per frame)", "track_vote": "② track majority", "vlm_all": "③ large VLM on every track",
+          "small_vlm": "④ small VLM alone", "jev": "⑤ Jev (+ small-VLM description)",
+          "gate": "⑥ Jev gate → large VLM", "gate_small": "⑦ small-VLM gate → large VLM"}
+SCORES = {"jev_p_ok": ("Jev p_ok", "#4C78A8", "-"), "vlm_p_yes": ("large VLM p_yes", "#E45756", "--"),
+          "small_p_yes": ("small VLM p_yes", "#F2A33A", "-."), "mean_conf": ("YOLO mean conf", "#888888", ":")}
 
 
 def confusion(path: Path, system: str, conf: dict, colors: dict[str, str]) -> None:
@@ -102,8 +103,10 @@ def operating_points(metrics: dict, curves: dict, run_data) -> dict:
     """(fpr, tpr) of the actual decisions: Jev at 0.5, VLM at v."""
     out = {}
     ys = {u: r["y_track"] for u, r in run_data.track_label.items() if r["y_track"] is not None}
-    for name, src, thr, key in (("jev_p_ok", run_data.jev, 0.5, "p_ok"), ("vlm_p_yes", run_data.vlm,
-                                                                          metrics["thresholds"].get("v"), "p_yes")):
+    th = metrics["thresholds"]
+    judges = (("jev_p_ok", run_data.jev, 0.5, "p_ok"), ("vlm_p_yes", run_data.vlm, th.get("v"), "p_yes"),
+              ("small_p_yes", run_data.small, th.get("v_small"), "p_yes"))
+    for name, src, thr, key in judges:
         if not src or thr is None:
             continue
         acc = {u: src[u][key] >= thr for u in ys}

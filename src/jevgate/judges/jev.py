@@ -1,8 +1,7 @@
-"""④ Jev (TypeSafe API) on track summaries (PLAN.md v6 §4). Jev accepts text only.
+"""⑤ Jev (TypeSafe API) on track summaries + the small VLM's description (PLAN.md v7 §4.2). Text only.
 
-Per track two questions over a shared state (the tracks of one video, in chunks):
-- `<uid>|ok`  Noul   "Is this track a real <majority class>?"  -> p_ok (the gate uses only this)
-- `<uid>|fix` Choice six classes + not_an_animal                -> exploratory correction
+One Noul question per track over a shared state (the tracks of one video, in chunks):
+`<uid>|ok`  "Is this track a real <majority class>?" -> p_ok.
 Raw requests and responses are kept; a response is reused only for an identical request body.
 """
 
@@ -16,7 +15,6 @@ from pathlib import Path
 
 import httpx
 
-from jevgate.core.config import class_names
 from jevgate.judges.base import Budget
 
 RETRY_STATUS = {408, 429, 499, 529}  # plus every 5xx
@@ -65,30 +63,35 @@ def detector_reliability(cfg: dict, repo: Path) -> dict | None:
             for c, v in val["per_class"].items()}
 
 
-def question_keys(uid: str) -> tuple[str, str]:
-    return f"{uid}|ok", f"{uid}|fix"
+def question_key(uid: str) -> str:
+    return f"{uid}|ok"
 
 
-def build_request(cfg: dict, tracks: list[dict], reliability: dict | None = None) -> dict:
+def build_request(cfg: dict, tracks: list[dict], descriptions: dict[str, str] | None = None,
+                  reliability: dict | None = None) -> dict:
     """Request body for tracks of one video. Track ids and video names are not sent (T1, T2, ... only)."""
     p = cfg["prompts"]
     names = {t["track_uid"]: f"T{k + 1}" for k, t in enumerate(tracks)}
+    view = {}
+    for t in tracks:
+        seen = {"visual_description": descriptions[t["track_uid"]]} if descriptions is not None else {}
+        view[names[t["track_uid"]]] = seen | t["evidence"]
     state = {"context": p["context"],
              "class_definitions": {**cfg["classes"], NOT_ANIMAL: cfg["not_an_animal"]},
-             "tracks": {names[t["track_uid"]]: t["evidence"] for t in tracks}}
+             "tracks": view}
+    if descriptions is not None:
+        state["visual_description_source"] = ("a small vision-language model looked at the track's best frame and "
+                                              "described the box without being told the detector's class")
     if reliability is not None:
         state["detector_reliability_on_other_videos"] = reliability
     questions = {}
     for t in tracks:
-        cls, target = t["majority_class"], f"Judge only track `{names[t['track_uid']]}` from the state."
-        q_ok, q_fix = question_keys(t["track_uid"])
-        questions[q_ok] = {"type": "noul",
-                           "instructions": {"question": p["question"].format(cls=cls), "target": target},
-                           "criteria": {"true": p["true_means"].format(cls=cls), "false": p["false_means"]}}
-        questions[q_fix] = {"type": "choice",
-                            "instructions": {"question": p["class_fix_question"], "target": target,
-                                             "options": "defined in `class_definitions`"},
-                            "criteria": dict.fromkeys([*class_names(cfg), NOT_ANIMAL])}
+        cls = t["majority_class"]
+        questions[question_key(t["track_uid"])] = {
+            "type": "noul",
+            "instructions": {"question": p["question"].format(cls=cls),
+                             "target": f"Judge only track `{names[t['track_uid']]}` from the state."},
+            "criteria": {"true": p["true_means"].format(cls=cls), "false": p["false_means"]}}
     return {"model": cfg["jev"]["model"], "state": state, "questions": questions}
 
 
@@ -138,9 +141,8 @@ class JevJudge:
     """Asks Jev about every track; writes requests/responses as they happen."""
 
     def __init__(self, cfg: dict, repo: Path, budget: Budget, requests_file: Path, responses_file: Path,
-                 resume: list[Path], log=None):
-        self.cfg, self.log = cfg, log
-        self.options = [*class_names(cfg), NOT_ANIMAL]
+                 resume: list[Path], descriptions: dict[str, str] | None = None, log=None):
+        self.cfg, self.log, self.descriptions = cfg, log, descriptions
         self.reliability = detector_reliability(cfg, repo)
         self.client = JevClient(cfg, budget)
         self.requests_file, self.responses_file = requests_file, responses_file
@@ -160,16 +162,13 @@ class JevJudge:
         return [ts[i:i + n] for ts in by_video.values() for i in range(0, len(ts), n)]
 
     def _run_chunk(self, chunk: list[dict]) -> list[dict]:
-        body = build_request(self.cfg, chunk, self.reliability)
+        body = build_request(self.cfg, chunk, self.descriptions, self.reliability)
         stored = self.stored.get(body_key(body))
         data, latency = (stored["response"], stored["latency_ms"]) if stored else self.client.post(body)
         answers, usage, n = data.get("answers", {}), data.get("usage", {}), len(chunk)
         rows = []
         for t in chunk:
-            q_ok, q_fix = question_keys(t["track_uid"])
-            fix = validate_choice(answers.get(q_fix), self.options)
-            rows.append({"track_uid": t["track_uid"], "p_ok": validate_noul(answers.get(q_ok)),
-                         "fix_probs": {k: round(v, 5) for k, v in fix.items()}, "fix_choice": max(fix, key=fix.get),
+            rows.append({"track_uid": t["track_uid"], "p_ok": validate_noul(answers.get(question_key(t["track_uid"]))),
                          "latency_ms": round(latency / n, 3), "request_latency_ms": round(latency, 1),
                          "request_size": n, "tokens_in": usage.get("input_tokens", 0) / n,
                          "tokens_out": usage.get("output_tokens", 0) / n, "jev_model": data.get("model"),

@@ -2,8 +2,9 @@
 
 S1 yolo     YOLO + ByteTrack on every frame of the split's videos -> detections, track summaries
 S2 labels   y per box (AAU IoU) and per track; GT objects the detector missed
-S3 jev      Jev track_ok / class_fix per track
-S4 vlm      Qwen3-VL Yes/No per track (representative frame)
+S3 describer  small VLM: description + p_yes per track (representative frame)
+S4 jev      Jev track_ok per track (track summary + description)
+S4 vlm      large VLM p_yes per track (same images)
 S5 eval     thresholds (dev: fit, test: frozen file), metrics, tables, figures, README
 S6 viz      sample frames and one video per split video
 """
@@ -25,7 +26,7 @@ from jevgate.data.splits import run_videos
 from jevgate.detectors.track import summarize_tracks
 from jevgate.evaluation.evaluate import RunData, evaluate
 from jevgate.judges.base import Budget
-from jevgate.judges.gate import fit_accept_threshold, fit_conf_threshold, fit_tau
+from jevgate.judges.gate import fit_accept_threshold, fit_band, fit_conf_threshold, fit_tau
 from jevgate.outputs import plots, report
 from jevgate.outputs.viz import Renderer
 
@@ -101,14 +102,36 @@ class Pipeline:
         return detections, tracks
 
     # S3, S4 -------------------------------------------------------------------------------
-    def jev(self, run: RunDir, tracks: list[dict]) -> list[dict]:
+    def describer(self, run: RunDir, tracks: list[dict], detections: list[dict]) -> list[dict]:
+        rows, prompts = self._vlm_stage(run, tracks, detections, "describer", describe=True)
+        run.write("describer", rows)
+        run.write("describer_prompts", prompts)
+        log(f"S3 describer: {len(rows)} tracks described")
+        return rows
+
+    def _vlm_stage(self, run, tracks, detections, section: str, describe: bool):
+        from jevgate.judges.vlm import TrackVLM
+
+        started = time.perf_counter()
+        judge = TrackVLM(self.cfg, section, self.budget if section == "vlm" else None, run.dir("track_images"),
+                         describe, log)
+        self._time(f"{section}_load_s", started)
+        started = time.perf_counter()
+        out = judge.judge(tracks, {d["box_id"]: d for d in detections})
+        self._time(f"{section}_s", started)
+        del judge
+        free_gpu()
+        return out
+
+    def jev(self, run: RunDir, tracks: list[dict], small_rows: list[dict] | None) -> list[dict]:
         from jevgate.judges.jev import JevJudge
 
         own = run.path / "jev" / "output" / "responses.jsonl"
         resume = [p for p in (self.repo / self.cfg["run"]["out_root"]).glob("*/jev/output/responses.jsonl")
                   if p.resolve() != own.resolve()]
+        descriptions = {r["track_uid"]: r["description"] for r in small_rows} if small_rows else None
         judge = JevJudge(self.cfg, self.repo, self.budget, run.file("jev_requests"), run.file("jev_responses"),
-                         resume, log)
+                         resume, descriptions, log)
         started = time.perf_counter()
         rows = judge.judge(tracks)
         self._time("jev_s", started)
@@ -118,24 +141,15 @@ class Pipeline:
         return rows
 
     def vlm(self, run: RunDir, tracks: list[dict], detections: list[dict]) -> list[dict]:
-        from jevgate.judges.vlm import VLMJudge
-
-        started = time.perf_counter()
-        judge = VLMJudge(self.cfg, self.budget, run.dir("vlm_images"), log)
-        self._time("vlm_load_s", started)
-        started = time.perf_counter()
-        rows, prompts = judge.judge(tracks, {d["box_id"]: d for d in detections})
-        self._time("vlm_s", started)
+        rows, prompts = self._vlm_stage(run, tracks, detections, "vlm", describe=False)
         run.write("vlm", rows)
         run.write("vlm_prompts", prompts)
-        del judge
-        free_gpu()
         log(f"S4 vlm: {len(rows)} tracks")
         return rows
 
     # S5 -----------------------------------------------------------------------------------
-    def thresholds(self, run, videos, detections, box_labels, track_labels, jev_rows, vlm_rows) -> dict:
-        """Dev: fit t, v, tau. Test: read the frozen dev file and refuse a mismatch."""
+    def thresholds(self, run, videos, detections, box_labels, track_labels, jev_rows, vlm_rows, small_rows) -> dict:
+        """Dev: fit t, v, v_small, tau, small_lo/hi. Test: read the frozen dev file and refuse a mismatch."""
         cfg = self.cfg
         if cfg["run"]["split"] == "test":
             th = yaml.safe_load((self.repo / cfg["thresholds_file"]).read_text())
@@ -157,6 +171,10 @@ class Pipeline:
         if vlm_rows:
             p_yes = {r["track_uid"]: r["p_yes"] for r in vlm_rows}
             th["v"] = fit_accept_threshold(y_track, [p_yes[u] for u in tracks_scored])
+        if small_rows:
+            p_small = [{r["track_uid"]: r["p_yes"] for r in small_rows}[u] for u in tracks_scored]
+            th["v_small"] = fit_accept_threshold(y_track, p_small)
+            th["small_lo"], th["small_hi"] = fit_band(y_track, p_small, cfg["gate"]["max_auto_error"])
         if jev_rows:
             p_ok = {r["track_uid"]: r["p_ok"] for r in jev_rows}
             th["tau"] = fit_tau(y_track, [p_ok[u] for u in tracks_scored], cfg["gate"]["max_auto_error"],
@@ -185,26 +203,30 @@ class Pipeline:
         log(f"S2 labels: {sum(r['scored'] for r in box_labels)} scored boxes, track types {types}, "
             f"detector recall upper bound {missed['recall_upper_bound']:.3f}")
 
-        jev_rows = self.jev(run, tracks) if {"jev", "gate"} & self.systems else None
-        vlm_rows = self.vlm(run, tracks, detections) if {"vlm_all", "gate"} & self.systems else None
+        small_rows = self.describer(run, tracks, detections) if {"small_vlm", "jev", "gate", "gate_small"} & \
+            self.systems else None
+        jev_rows = self.jev(run, tracks, small_rows) if {"jev", "gate"} & self.systems else None
+        vlm_rows = self.vlm(run, tracks, detections) if {"vlm_all", "gate", "gate_small"} & self.systems else None
 
         bl = {r["box_id"]: r for r in box_labels}
         tl = {r["track_uid"]: r for r in track_labels}
-        th = self.thresholds(run, videos, detections, bl, tl, jev_rows, vlm_rows)
+        th = self.thresholds(run, videos, detections, bl, tl, jev_rows, vlm_rows, small_rows)
         if cfg["run"]["split"] == "dev":
             run.file("thresholds").write_text(yaml.safe_dump(th, sort_keys=False))
-        log(f"S5 thresholds: t={th['t']:.4f} v={th.get('v')} tau={th.get('tau')}")
+        log("S5 thresholds: " + ", ".join(f"{k}={th[k]}" for k in ("t", "v", "v_small", "tau", "small_lo", "small_hi")
+                                          if k in th))
 
         started = time.perf_counter()
-        data = RunData(cfg, frames, detections, tracks, box_labels, track_labels, jev_rows, vlm_rows, th, self.timing)
+        data = RunData(cfg, frames, detections, tracks, box_labels, track_labels, jev_rows, vlm_rows, th, self.timing,
+                       small_rows)
         metrics, judgments, curves = evaluate(data, missed, self.budget.summary(), cfg)
         run.write("judgments", judgments)
         run.write_json("metrics", metrics)
         if cfg["run"]["split"] == "test":
             run.write_json("endpoints", {"primary": metrics["primary"], "endpoints": metrics["endpoints"]})
-        if jev_rows and vlm_rows:
+        if data.gate_rows:
             run.write("gate", data.gate_rows)
-            report.write_errors(run.file("errors"), tracks, tl, data.jev, data.vlm, data.gate_rows)
+            report.write_errors(run.file("errors"), tracks, tl, data)
         plots.all_figures(run, metrics, curves, data)
         self._time("evaluate_s", started)
         metrics["timing"] = self.timing

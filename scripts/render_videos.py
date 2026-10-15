@@ -32,7 +32,8 @@ def main() -> None:
         route = {r["track_uid"]: r["routed_to"] for r in run.read("gate")}
     else:  # runs made before gate_decisions.jsonl existed: rebuild the routing from the stored judges
         data = RunData(cfg, frames, detections, run.read("tracks"), run.read("box_labels"), run.read("track_labels"),
-                       run.read("jev"), run.read("vlm"), run.meta()["thresholds"], {})
+                       run.read("jev"), run.read("vlm"), run.meta()["thresholds"], {},
+                       run.read("describer") if run.exists("describer") else None)
         data.accepts()
         run.write("gate", data.gate_rows)
         route = {r["track_uid"]: r["routed_to"] for r in data.gate_rows}

@@ -10,8 +10,9 @@ REQUIRED = {
     "tracks": ["track_uid", "video", "box_ids", "rep_box_id", "majority_class", "evidence"],
     "box_labels": ["box_id", "gt_status", "max_iou", "y", "scored"],
     "track_labels": ["track_uid", "y_track", "type"],
-    "jev": ["track_uid", "p_ok", "fix_probs", "latency_ms", "tokens_in", "tokens_out"],
+    "jev": ["track_uid", "p_ok", "latency_ms", "tokens_in", "tokens_out"],
     "vlm": ["track_uid", "p_yes", "latency_ms", "rep_box_id"],
+    "describer": ["track_uid", "p_yes", "latency_ms", "rep_box_id", "description"],
 }
 METRIC_KEYS = ["n", "systems", "primary", "endpoints", "track_level", "missed_objects", "timing", "thresholds"]
 
@@ -84,13 +85,15 @@ def check_labels(box_labels, track_labels, dets, tracks, cfg) -> list[str]:
 
 def check_judges(run: RunDir, tracks: list[dict]) -> list[str]:
     errors, uids = [], [t["track_uid"] for t in tracks]
-    for name, key in (("jev", "p_ok"), ("vlm", "p_yes")):
+    for name, key in (("jev", "p_ok"), ("vlm", "p_yes"), ("describer", "p_yes")):
         if not run.exists(name):
             continue
         rows = run.read(name)
         errors += missing_fields(rows, REQUIRED[name], name)
         errors += same_ids(uids, [r["track_uid"] for r in rows], name)
         errors += [f"{name}: {key} outside [0,1] {r['track_uid']}" for r in rows if not 0 <= r[key] <= 1][:5]
+        if name == "describer":
+            errors += [f"describer: empty description {r['track_uid']}" for r in rows if not r["description"]][:5]
     return errors
 
 
@@ -106,8 +109,8 @@ def check_judgments(run: RunDir, dets: list[dict]) -> list[str]:
         if bad:
             errors.append(f"judgments: {r['box_id']} has no valid prediction for {bad}")
             break
-        if r["track_uid"] is None and any(r[s] != "background" for s in systems if s != "yolo"):
-            errors.append(f"judgments: untracked box {r['box_id']} kept by a track system")
+        if r["track_uid"] is None and len({r[s] for s in systems}) > 1:
+            errors.append(f"judgments: untracked box {r['box_id']} differs between systems (all follow ①)")
             break
     return errors
 
