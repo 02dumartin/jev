@@ -4,6 +4,9 @@ Left:  the upright clip with the known events circled, the event timeline, and t
 Right, top:    VLM only: the VLM answers the questions itself -> time, plain answers (no probabilities), act.
 Right, bottom: VLM + Jev: the VLM describes, Jev answers every question in one request -> time, 3x2 cards, act.
 Text never gets cut: every label is wrapped to its box width.
+
+Timing is replayed as measured: t = seconds since the clip ended. The VLM-only answers appear at their own VLM time;
+the description appears at its VLM time, then Jev's cards at description + Jev time. Red boxes are stopwatches.
 """
 
 from pathlib import Path
@@ -78,7 +81,7 @@ class Dashboard:
         d.text((x0 + 18, y0 + 12), title, font=self.f["h"], fill=self.c["title"])
         edge = x1 - 18
         if total_s is not None:
-            text = f"Time {total_s:.1f} s" if total_s >= 1 else f"Time {total_s:.2f} s"
+            text = f"Time {total_s:.2f} s"
             tw = d.textlength(text, font=self.f["total"])
             bx0 = edge - tw - 28
             d.rounded_rectangle([bx0, y0 + 8, edge, y0 + 54], 10, fill=self.c["panel"], outline=self.c["total"],
@@ -105,7 +108,7 @@ class Dashboard:
                 d.text((x + w - 16, top + 9 + i * 18), line, font=self.f["s"], fill=self.c["title"], anchor="rm")
 
     # left column ----------------------------------------------------------------------------
-    def left(self, canvas, d, img, meta, cur, state) -> None:
+    def left(self, canvas, d, img, meta, cur, state, t: float | None) -> None:
         side, x, y = 640, 30, 84
         ev = self.cfg["events"]
         shown = mark_events(img, active_events(meta["events"], cur), ev["marker_radius_frac"], ev["marker_color"])
@@ -123,10 +126,13 @@ class Dashboard:
         px = x + min(cur, n) / n * side
         d.line([px, ty - 4, px, ty + 22], fill=self.c["title"], width=2)
         sy = ty + 34
+        ready = t is not None and t >= state["vlm_s"]
         y_end = self.panel(d, [x, sy, x + side, self.H - 40], "Scene description (VLM)",
-                           f"{state['vlm_s']:.1f} s" if state else None)
-        if state is None:
+                           f"{min(t, state['vlm_s']):.1f} s" if t is not None else None)
+        if t is None:
             d.text((x + 18, y_end), "watching the clip …", font=self.f["b"], fill=self.c["muted"])
+        elif not ready:
+            d.text((x + 18, y_end), f"VLM describing the scene … {t:.1f} s", font=self.f["b"], fill=self.c["muted"])
         else:
             yy = y_end
             for k, v in state["state"].items():
@@ -137,14 +143,16 @@ class Dashboard:
         d.text((x, self.H - 30), self.r["credit"], font=self.f["s"], fill=self.c["muted"])
 
     # right column ---------------------------------------------------------------------------
-    def vlm_only(self, d, box, vo: dict | None) -> None:
+    def vlm_only(self, d, box, vo: dict | None, t: float | None) -> None:
         x0, y0, x1, y1 = box
         n_q = len(self.cfg["questions"])
-        right = f"{n_q} questions, one generation" if vo else None
-        y = self.panel(d, box, "VLM only  ·  the VLM looks and answers every question itself", right,
-                       vo["vlm_s"] if vo else None)
-        if vo is None:
-            d.text((x0 + 18, y), "waiting …", font=self.f["b"], fill=self.c["muted"])
+        running = vo is not None and t is not None
+        y = self.panel(d, box, "VLM only  ·  the VLM looks and answers every question itself",
+                       f"{n_q} questions, one generation" if running else None,
+                       min(t, vo["vlm_s"]) if running else None)
+        if not running or t < vo["vlm_s"]:
+            d.text((x0 + 18, y), "VLM answering …" if running else "waiting for the clip …", font=self.f["b"],
+                   fill=self.c["muted"])
             self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
             return
         cols, colw = 3, (x1 - x0 - 36) / 3
@@ -179,15 +187,20 @@ class Dashboard:
             d.text((bx1 + 8, yy - 1), f"{p:.2f}", font=self.f["s"], fill=self.c["ink"])
             yy += 17 * len(lines) + 5
 
-    def vlm_jev(self, d, box, dec: dict | None, state: dict | None, single: dict | None, act, reveal: float) -> None:
+    def vlm_jev(self, d, box, dec: dict | None, state: dict | None, single: dict | None, act, t: float | None) -> None:
         x0, y0, x1, y1 = box
-        right, total = None, None
-        if dec is not None:
-            right = "Jev only"
-            total = dec["latency_ms"] / 1000
-        y = self.panel(d, box, "VLM + Jev  ·  the VLM describes, Jev answers all in one request", right, total)
-        if dec is None:
-            d.text((x0 + 18, y), "waiting for the description …", font=self.f["b"], fill=self.c["muted"])
+        title = "VLM + Jev  ·  the VLM describes, Jev answers all in one request"
+        if dec is None or t is None:
+            y = self.panel(d, box, title)
+            d.text((x0 + 18, y), "waiting for the clip …", font=self.f["b"], fill=self.c["muted"])
+            self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
+            return
+        jev_s, start = dec["latency_ms"] / 1000, state["vlm_s"]
+        y = self.panel(d, box, title, "Jev only", min(max(0.0, t - start), jev_s))
+        if t < start + jev_s:
+            msg = (f"waiting for the VLM description … {t:.1f} s" if t < start
+                   else "Jev answering all questions in one request …")
+            d.text((x0 + 18, y), msg, font=self.f["b"], fill=self.c["muted"])
             self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
             return
         note = f"Time = Jev only; the VLM description ({state['vlm_s']:.1f} s, left) is not included."
@@ -198,35 +211,41 @@ class Dashboard:
         cols, gap = 3, 14
         cw = (x1 - x0 - 36 - gap * (cols - 1)) / cols
         ch = (y1 - 72 - 16 - (y + 16) - gap) / 2
-        shown = dec["cards"][: max(0, int(np.ceil(reveal * len(dec["cards"]))))]
-        for i, c in enumerate(shown):
+        for i, c in enumerate(dec["cards"]):  # one request: every card arrives at the same moment
             self.card(d, x0 + 18 + (i % cols) * (cw + gap), y + 16 + (i // cols) * (ch + gap), cw, ch, c)
-        self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, act if reveal >= 1.0 else None)
+        self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, act)
 
     # whole frame ----------------------------------------------------------------------------
-    def frame(self, img, meta, cur, clip_no, n_clips, state, dec_all: dict | None, reveal: float) -> np.ndarray:
+    def frame(self, img, meta, cur, clip_no, n_clips, state, dec_all: dict, t: float | None) -> np.ndarray:
+        """t = None while the clip plays; afterwards seconds since the clip ended."""
         canvas = Image.new("RGB", (self.W, self.H), self.c["background"])
         d = ImageDraw.Draw(canvas)
         d.text((30, 18), self.r["title"], font=self.f["title"], fill=self.c["title"])
         tag = f"camera clip {clip_no}/{n_clips}  ·  #{meta['sample_id']}"
         d.text((self.W - 30 - d.textlength(tag, font=self.f["h2"]), 30), tag, font=self.f["h2"], fill=self.c["muted"])
-        self.left(canvas, d, img, meta, cur, state)
+        self.left(canvas, d, img, meta, cur, state, t)
         rx, rw = 700, self.W - 730
-        done = dec_all is not None
-        self.vlm_only(d, [rx, 84, rx + rw, 84 + 290], dec_all.get("vlm_only") if done else None)
-        self.vlm_jev(d, [rx, 392, rx + rw, self.H - 40], dec_all["dec"] if done else None, state,
-                     dec_all.get("single") if done else None, dec_all["action"] if done else None, reveal)
+        self.vlm_only(d, [rx, 84, rx + rw, 84 + 290], dec_all.get("vlm_only"), t)
+        self.vlm_jev(d, [rx, 392, rx + rw, self.H - 40], dec_all["dec"], state, dec_all.get("single"),
+                     dec_all["action"], t)
         return np.asarray(canvas)
+
+    def finish_s(self, state: dict, dec_all: dict) -> float:
+        """When the slower path has its answer (seconds after the clip ends)."""
+        vo = dec_all.get("vlm_only", {}).get("vlm_s", 0.0)
+        return max(vo, state["vlm_s"] + dec_all["dec"]["latency_ms"] / 1000)
 
 
 def render_clip(dash: Dashboard, writer, frames: list[np.ndarray], meta: dict, clip_no: int, n_clips: int,
                 state: dict, dec_all: dict) -> None:
-    """Play the clip with empty panels, then reveal the description, both answer panels, and hold."""
+    """Play the clip, then replay the measured timing at video_fps and hold the final screen."""
+    out_fps = dash.r["video_fps"]
+    repeat = max(1, round(out_fps / dash.r["fps"]))
     for i, img in enumerate(frames):
-        writer.send(dash.frame(img, meta, i + 1, clip_no, n_clips, None, None, 0.0))
-    fps, last = dash.r["fps"], frames[-1]
-    half = max(1, fps // 2)
-    steps = [(state, None, 0.0)] * half + [(state, dec_all, (k + 1) / half) for k in range(half)]
-    steps += [(state, dec_all, 1.0)] * int(dash.r["hold_s"] * fps)
-    for st, de, rv in steps:
-        writer.send(dash.frame(last, meta, len(frames), clip_no, n_clips, st, de, rv))
+        canvas = dash.frame(img, meta, i + 1, clip_no, n_clips, state, dec_all, None)
+        for _ in range(repeat):
+            writer.send(canvas)
+    last, end = frames[-1], dash.finish_s(state, dec_all)
+    n = int(np.ceil((end + dash.r["hold_s"]) * out_fps))
+    for k in range(n + 1):
+        writer.send(dash.frame(last, meta, len(frames), clip_no, n_clips, state, dec_all, k / out_fps))

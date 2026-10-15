@@ -223,12 +223,13 @@ class DemoRun:
                                 r.get("fill_others", True))
         dash = Dashboard(self.cfg, self.repo)
         path = self.p("evaluation/dashboard.mp4")
-        writer = h264_writer(path, dash.W, dash.H, self.cfg["render"]["fps"])
+        writer = h264_writer(path, dash.W, dash.H, self.cfg["render"]["video_fps"])
         for k, m in enumerate(chosen, 1):
             sid = m["sample_id"]
             frames = read_frames(self.root / self.cfg["data"]["clips_dir"] / f"{sid}.mp4", m["rotation_cw"])
             render_clip(dash, writer, frames, m, k, len(chosen), states[sid], decs[sid])
-            last = dash.frame(frames[-1], m, len(frames), k, len(chosen), states[sid], decs[sid], 1.0)
+            last = dash.frame(frames[-1], m, len(frames), k, len(chosen), states[sid], decs[sid],
+                              dash.finish_s(states[sid], decs[sid]) + 1)
             Image.fromarray(last).save(self.p(f"evaluation/stills/{k:02d}_{sid}.png"))
         writer.close()
         return path
