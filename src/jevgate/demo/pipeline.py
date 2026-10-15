@@ -49,16 +49,22 @@ def took_product(events: list[dict]) -> bool:
     return sum(e["label"] == "take" for e in events) > sum(e["label"] == "put" for e in events)
 
 
-def pick_for_video(rows: list[dict], n: int, seed: int) -> list[dict]:
-    """Round-robin over action badges so the video shows every kind of outcome."""
+def pick_for_video(rows: list[dict], n: int, seed: int, include: list[str] = (), exclude: list[str] = ()) -> list[dict]:
+    """`include` clips first (in the given order), then round-robin over action badges for variety; `exclude` never."""
+    by_id = {r["sample_id"]: r for r in rows}
+    missing = [s for s in include if s not in by_id]
+    if missing:
+        raise ValueError(f"render.include clips not in this run: {missing}")
+    out = [by_id[s] for s in include if s not in exclude]
     groups = defaultdict(list)
     for r in rows:
-        groups[r["action"]["badge"]].append(r)
+        if r["sample_id"] not in exclude and r["sample_id"] not in include:
+            groups[r["action"]["badge"]].append(r)
     rng = random.Random(seed)
     for g in groups.values():
         rng.shuffle(g)
-    out, keys = [], sorted(groups)
-    while len(out) < min(n, len(rows)):
+    keys = sorted(groups)
+    while len(out) < n and any(groups.values()):
         for k in keys:
             if groups[k] and len(out) < n:
                 out.append(groups[k].pop())
@@ -209,7 +215,8 @@ class DemoRun:
         from jevgate.outputs.viz import h264_writer
 
         rows = [m | {"action": decs[m["sample_id"]]["action"]} for m in metas]
-        chosen = pick_for_video(rows, self.cfg["render"]["clips_in_video"], self.cfg["render"]["seed"])
+        r = self.cfg["render"]
+        chosen = pick_for_video(rows, r["clips_in_video"], r["seed"], r.get("include", []), r.get("exclude", []))
         dash = Dashboard(self.cfg, self.repo)
         path = self.p("evaluation/dashboard.mp4")
         writer = h264_writer(path, dash.W, dash.H, self.cfg["render"]["fps"])
@@ -237,3 +244,39 @@ class DemoRun:
         video = self.render(metas, states, decs)
         log(f"video: {video}")
         return self.path
+
+
+def load_results(run_dir: Path, cfg: dict) -> tuple[list[dict], dict, dict]:
+    """(metas, states, decs) rebuilt from a finished run folder, without calling any model."""
+    metas = read_jsonl(run_dir / "data" / cfg["data"]["meta"])
+    keep = {r["sample_id"] for r in read_jsonl(run_dir / "vlm/output/states.jsonl")}
+    metas = [m for m in metas if m["sample_id"] in keep]
+    states = {r["sample_id"]: r for r in read_jsonl(run_dir / "vlm/output/states.jsonl")}
+    cards = {r["sample_id"]: r["cards"] for r in read_jsonl(run_dir / "jev/output/decisions.jsonl")}
+    resp = {r["sample_id"]: r for r in read_jsonl(run_dir / "jev/output/responses.jsonl")}
+    single_path = run_dir / "jev/output/single.jsonl"
+    single = {r["sample_id"]: r for r in read_jsonl(single_path)} if single_path.exists() else {}
+    vo_path = run_dir / "vlm_only/output/answers.jsonl"
+    answers = {r["sample_id"]: r for r in read_jsonl(vo_path)} if vo_path.exists() else {}
+    decs = {}
+    for m in metas:
+        sid = m["sample_id"]
+        response = resp[sid]["response"]
+        dec = {"cards": cards[sid], "latency_ms": resp[sid]["latency_ms"], "usage": response.get("usage", {}),
+               "model": response.get("model")}
+        decs[sid] = {"dec": dec, "single": single.get(sid), "action": action(cfg, cards[sid])}
+        if sid in answers:
+            vc = vlm_cards(cfg, answers[sid]["answers"])
+            decs[sid]["vlm_only"] = {"cards": vc, "action": action(cfg, vc), "vlm_s": answers[sid]["vlm_s"]}
+    return metas, states, decs
+
+
+def rerender(run_dir: Path, cfg: dict, repo: Path) -> Path:
+    """Redraw evaluation/dashboard.mp4 and stills/ of an existing run with the given (render) config."""
+    import shutil
+
+    metas, states, decs = load_results(run_dir, cfg)
+    shutil.rmtree(run_dir / "evaluation" / "stills", ignore_errors=True)
+    shim = DemoRun.__new__(DemoRun)
+    shim.cfg, shim.repo, shim.path, shim.root = cfg, repo, run_dir, repo / cfg["data"]["root"]
+    return shim.render(metas, states, decs)

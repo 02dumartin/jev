@@ -103,7 +103,10 @@ actions:
       restock_check: {badge: "RESTOCK CHECK", color: "#E8384F"}
 
 render:
-  clips_in_video: 24              # dashboard video: this many clips, chosen for variety
+  clips_in_video: 24              # dashboard video: this many clips; `include` first (in order), the rest for variety
+  include: ["000457", "000368", "000436", "002429", "002198", "002491", "000421", "000134", "000951", "000953",
+            "001283"]
+  exclude: ["001246", "000217", "001797"]
   seed: 0
   fps: 6                          # the clips' own frame rate
   hold_s: 3.0                     # freeze on the last frame with the full decision
@@ -113,7 +116,8 @@ render:
   font_dir: assets/fonts          # Noto Sans KR (copied from detect-and-reason, OFL)
   fonts: {regular: NotoSansKR-Regular.ttf, medium: NotoSansKR-Medium.ttf, bold: NotoSansKR-Bold.ttf}
   colors: {background: "#FAF8F2", panel: "#FFFFFF", title: "#333333", ink: "#2B2B2B", muted: "#7A7A7A",
-           line: "#E3DED3", sure: "#3F9E5A", unsure: "#E0A800", bar: "#4C78A8", bar_bg: "#ECE8DF"}
+           line: "#E3DED3", sure: "#3F9E5A", unsure: "#E0A800", bar: "#4C78A8", bar_bg: "#ECE8DF",
+           total: "#D62D20"}
 
 # Comparison path shown in the top-right panel: the same VLM looks at the same frames and answers the same
 # questions itself (one generation, no probabilities).

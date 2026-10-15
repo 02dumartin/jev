@@ -41,7 +41,7 @@ class Dashboard:
 
         self.f = {"title": font("bold", 34), "h": font("bold", 21), "h2": font("medium", 18), "b": font("regular", 16),
                   "s": font("regular", 14), "value": font("bold", 22), "badge": font("bold", 30),
-                  "card_t": font("medium", 16)}
+                  "card_t": font("medium", 16), "total": font("bold", 28)}
 
     # text helpers ---------------------------------------------------------------------------
     def wrap(self, d: ImageDraw.ImageDraw, text: str, width: float, font) -> list[str]:
@@ -71,14 +71,23 @@ class Dashboard:
             y += h
         return y
 
-    def panel(self, d, box, title: str, right: str | None = None) -> int:
+    def panel(self, d, box, title: str, right: str | None = None, total_s: float | None = None) -> int:
+        """Panel with a title; `total_s` is drawn large in a red box at the top right, `right` beside it."""
         x0, y0, x1, _ = box
         d.rounded_rectangle(box, 14, fill=self.c["panel"], outline=self.c["line"], width=2)
         d.text((x0 + 18, y0 + 12), title, font=self.f["h"], fill=self.c["title"])
+        edge = x1 - 18
+        if total_s is not None:
+            text = f"Total {total_s:.1f} s"
+            tw = d.textlength(text, font=self.f["total"])
+            bx0 = edge - tw - 28
+            d.rounded_rectangle([bx0, y0 + 8, edge, y0 + 54], 10, fill=self.c["panel"], outline=self.c["total"],
+                                width=3)
+            d.text(((bx0 + edge) / 2, y0 + 31), text, font=self.f["total"], fill=self.c["total"], anchor="mm")
+            edge = bx0 - 14
         if right:
-            w = d.textlength(right, font=self.f["h2"])
-            d.text((x1 - 18 - w, y0 + 14), right, font=self.f["h2"], fill=self.c["muted"])
-        return y0 + 50
+            d.text((edge, y0 + 31), right, font=self.f["h2"], fill=self.c["muted"], anchor="rm")
+        return y0 + (64 if total_s is not None else 50)
 
     def badge(self, d, x, y, w, act: dict | None, note: str | None = None) -> None:
         if act is None:
@@ -131,8 +140,9 @@ class Dashboard:
     def vlm_only(self, d, box, vo: dict | None) -> None:
         x0, y0, x1, y1 = box
         n_q = len(self.cfg["questions"])
-        right = f"{n_q} questions · {vo['vlm_s']:.1f} s" if vo else None
-        y = self.panel(d, box, "VLM only  ·  the VLM looks and answers every question itself", right)
+        right = f"{n_q} questions, one generation" if vo else None
+        y = self.panel(d, box, "VLM only  ·  the VLM looks and answers every question itself", right,
+                       vo["vlm_s"] if vo else None)
         if vo is None:
             d.text((x0 + 18, y), "waiting …", font=self.f["b"], fill=self.c["muted"])
             self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
@@ -171,17 +181,18 @@ class Dashboard:
 
     def vlm_jev(self, d, box, dec: dict | None, state: dict | None, single: dict | None, act, reveal: float) -> None:
         x0, y0, x1, y1 = box
-        right = None
+        right, total = None, None
         if dec is not None:
-            right = f"VLM {state['vlm_s']:.1f} s  +  Jev {dec['latency_ms'] / 1000:.2f} s (1 request)"
-        y = self.panel(d, box, "VLM + Jev  ·  the VLM describes, Jev answers every question in one request", right)
+            right = f"VLM {state['vlm_s']:.1f} s + Jev {dec['latency_ms'] / 1000:.2f} s"
+            total = state["vlm_s"] + dec["latency_ms"] / 1000
+        y = self.panel(d, box, "VLM + Jev  ·  the VLM describes, Jev answers all in one request", right, total)
         if dec is None:
             d.text((x0 + 18, y), "waiting for the description …", font=self.f["b"], fill=self.c["muted"])
             self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
             return
         if single:
             n_q = len(dec["cards"])
-            d.text((x0 + 18, y - 8), f"asked one by one instead: {n_q} requests, {single['tokens']} tokens "
+            d.text((x0 + 18, y - 10), f"asked one by one instead: {n_q} requests, {single['tokens']} tokens "
                    f"(vs {sum(dec['usage'].values())} tokens in one request)", font=self.f["s"], fill=self.c["muted"])
         cols, gap = 3, 14
         cw = (x1 - x0 - 36 - gap * (cols - 1)) / cols
