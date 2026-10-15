@@ -33,6 +33,27 @@ def results_table(m: dict) -> list[str]:
     return lines
 
 
+def limits(m: dict) -> list[str]:
+    """Plain statements of what the numbers cannot show, derived from the run itself."""
+    th, tl, n = m["thresholds"], m["track_level"], m["n"]
+    out = ["## Limits", ""]
+    if th.get("tau", 0) > 1:
+        out.append(f"- No tau met the dev target (error ≤ {th.get('max_auto_error')} on Jev-handled tracks), so tau = "
+                   f"{th['tau']:.2f}: the Jev gate routes every track to the large VLM and equals ③ by construction.")
+    j, s = tl.get("auroc_jev_p_ok", {}), tl.get("auroc_small_p_yes", {})
+    if j.get("auc") is not None and s.get("auc") is not None:
+        out.append(f"- Jev reads the small VLM's description; its track AUROC {j['auc']:.3f} vs the small VLM's own "
+                   f"p_yes {s['auc']:.3f}: Jev adds no separating information beyond its input.")
+    if tl.get("jev_ece") is not None:
+        out.append(f"- Jev calibration on this domain: ECE {tl['jev_ece']:.3f} (Jev is not trained on these videos and "
+                   "cannot be fine-tuned through the API).")
+    out.append(f"- n: {n['tracks_scored']} scored tracks, of which {n['track_types'].get('false', 0)} false and "
+               f"{n['track_types'].get('misclassified', 0)} misclassified; CIs are wide.")
+    mo = m["missed_objects"]
+    out.append(f"- Detector recall upper bound {mo['recall_upper_bound']:.3f}: no judge recovers missed animals.")
+    return out + [""]
+
+
 def metrics_md(m: dict) -> str:
     n, p, tl = m["n"], m["primary"], m["track_level"]
     lines = [f"# Results ({m['split']})", "",
@@ -67,6 +88,7 @@ def metrics_md(m: dict) -> str:
             lines.append(f"- S1 small-VLM gate: Δacc vs ③ {d['delta']:+.4f} [{_f(d['ci_low'], 4)}, "
                          f"{_f(d['ci_high'], 4)}], call ratio {_f(sg['call_ratio'])}")
         lines.append("")
+    lines += limits(m)
     lines += ["## Track level", ""]
     for k in ("auroc_jev_p_ok", "auroc_vlm_p_yes", "auroc_small_p_yes", "auroc_mean_conf"):
         if k in tl:
