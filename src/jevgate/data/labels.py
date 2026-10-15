@@ -1,4 +1,4 @@
-"""Ground truth for detections (y_box) and tracks (y_track), and the GT the detector missed (PLAN.md §2.2-2.3)."""
+"""Ground truth for detections (y_box) and tracks (y_track), and the GT the detector missed (PLAN_brackish.md §2.2-2.3)."""
 
 from collections import Counter, defaultdict
 

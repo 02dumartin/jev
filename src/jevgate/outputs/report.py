@@ -1,4 +1,4 @@
-"""evaluation/tables/metrics.md, errors.csv and the run README.md (PLAN.md v7 §5-6)."""
+"""evaluation/tables/metrics.md, errors.csv and the run README.md (PLAN_brackish.md v7 §5-6)."""
 
 import csv
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Qwen3-VL judges of a track (PLAN.md v7 §1, §4).
+"""Qwen3-VL judges of a track (PLAN_brackish.md v7 §1, §4).
 
 Both see the same two images of a track's representative box (highest detector conf): the full frame with
 the box drawn in red and a zoomed crop (view settings in `vlm:`).

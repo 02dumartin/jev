@@ -1,4 +1,4 @@
-"""S5: every number of a run (PLAN.md v7 §5) from the files of the earlier stages.
+"""S5: every number of a run (PLAN_brackish.md v7 §5) from the files of the earlier stages.
 
 Box level: 7-way accuracy / macro F1 / per-class P,R, detection recall, flicker.
 Track level: Jev calibration (ECE, Brier, reliability), ROC / AUROC [CI] of Jev p, p_big, p_small, mean conf.

@@ -1,4 +1,4 @@
-"""Turning judge outputs into box predictions, the two gates, and the dev-only thresholds (PLAN.md v7 §3)."""
+"""Turning judge outputs into box predictions, the two gates, and the dev-only thresholds (PLAN_brackish.md v7 §3)."""
 
 import numpy as np
 

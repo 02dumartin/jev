@@ -1,4 +1,4 @@
-"""YOLO + ByteTrack on whole videos, and per-track summaries (PLAN.md v6 §1.2, §4.1).
+"""YOLO + ByteTrack on whole videos, and per-track summaries (PLAN_brackish.md v6 §1.2, §4.1).
 
 The detector is the image model trained on the video split; the tracker only links its boxes across
 consecutive frames. Every detection (conf >= track.conf) is kept as a row; boxes the tracker did not

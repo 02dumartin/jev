@@ -1,4 +1,4 @@
-"""Run one experiment (PLAN.md v6): uv run python scripts/run_pipeline.py --config configs/smoke.yaml"""
+"""Run one experiment (PLAN_brackish.md v6): uv run python scripts/run_pipeline.py --config configs/smoke.yaml"""
 
 import argparse
 from pathlib import Path

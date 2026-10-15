@@ -1,4 +1,4 @@
-"""Figures under evaluation/ (PLAN.md v6 §7).
+"""Figures under evaluation/ (PLAN_brackish.md v6 §7).
 
 confusion/<system>.png  7x7 (six animals + background), rows = truth, row-normalised % with counts
 plots/roc.png           track level: which score separates correct from wrong tracks? AUROC [95% CI]

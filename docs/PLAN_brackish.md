@@ -161,7 +161,7 @@ jev-gate/
 │   ├── evaluation/   metrics.py, evaluate.py, contracts.py
 │   └── outputs/      colors.py, plots.py, viz.py, report.py
 ├── src/tests/
-├── docs/           PLAN.md, DATA.md
+├── docs/           PLAN_brackish.md, DATA.md
 └── train/ data/ runs/ .env   (gitignore)
 ```
 
@@ -199,3 +199,4 @@ jev-gate/
 - v4 (2026-10-14): GT 박스 6-way. test primary 실패 (호출 비율 0.999). 결과 삭제.
 - v6 (2026-10-15): YOLO12s + ByteTrack track 단위, Jev는 텍스트 요약만. **dev만 실행, test 생략.** dev: Jev track AUROC 0.66 (YOLO conf 평균 0.71, 큰 VLM 0.80), τ = 0.81에서 Jev 자동 처리 2.4%, 호출 비율 0.976. track 밖 박스 1,242개 중 진짜 동물 596개 손실.
 - **v7 (2026-10-15, v6 dev만 보고 test 전)**: 작은 VLM 서술을 Jev state에 추가, 큰 VLM 호출 절약을 primary로, 작은 VLM 자기 확률 게이트(⑦) 대조군, track 밖 박스는 ① 규칙으로 유지. `class_fix` 제거.
+- **v7 test (2026-10-15, `runs/261015_test`, 한 번)**: primary 실패 (τ = 1.01이라 Jev 게이트 = 큰 VLM 전수, 호출 비율 1.00). Jev track AUROC 0.700 vs 작은 VLM 0.713 vs YOLO conf 평균 0.787. 작은 VLM 게이트: 호출 0.40이지만 자동 처리분 오류 dev 0.043 → test 0.244. 이 계획은 여기서 종료하고, 정리는 `docs/RESULTS_brackish.md`, 후속은 `docs/PLAN_text.md`.

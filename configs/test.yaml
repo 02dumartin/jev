@@ -1,4 +1,4 @@
-# Final test evaluation. Run once, after thresholds were fitted on dev (PLAN.md §8).
+# Final test evaluation. Run once, after thresholds were fitted on dev (PLAN_brackish.md §8).
 inherit: base.yaml
 
 run:

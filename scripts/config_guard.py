@@ -1,4 +1,4 @@
-"""⓪ Intent check: list watched config keys that differ from a base git ref (PLAN.md §7).
+"""⓪ Intent check: list watched config keys that differ from a base git ref (PLAN_brackish.md §7).
 
 Exit code 2 when a question must be asked before running; 0 otherwise. Compares each configs/*.yaml
 file as written (without following `inherit`) against the same file at --base.

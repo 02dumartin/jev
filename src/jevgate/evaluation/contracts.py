@@ -1,4 +1,4 @@
-"""Data contracts between stages (PLAN.md v6 §7). Each check returns a list of violation strings."""
+"""Data contracts between stages (PLAN_brackish.md v6 §7). Each check returns a list of violation strings."""
 
 from collections import Counter
 

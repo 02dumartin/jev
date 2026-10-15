@@ -1,4 +1,4 @@
-"""Scoring: 7-way box accuracy and F1, ROC / AUC, calibration, and cluster-bootstrap CIs (PLAN.md v6 §6)."""
+"""Scoring: 7-way box accuracy and F1, ROC / AUC, calibration, and cluster-bootstrap CIs (PLAN_brackish.md v6 §6)."""
 
 from collections import defaultdict
 

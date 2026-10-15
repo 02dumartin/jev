@@ -1,4 +1,4 @@
-# Base config (PLAN.md v7). Every value that changes a result lives here.
+# Base config (PLAN_brackish.md v7). Every value that changes a result lives here.
 # Child configs set `inherit: base.yaml` and override only what differs.
 
 run:
@@ -127,10 +127,10 @@ thresholds_file: null               # test runs point to the dev-fitted threshol
 metrics:
   ece_bins: 15
   min_class_n: 20                   # class panels with fewer scored boxes are greyed out
-  bootstrap: {n: 1000, seed: 0}     # cluster bootstrap over tracks (PLAN.md §6.3)
+  bootstrap: {n: 1000, seed: 0}     # cluster bootstrap over tracks (PLAN_brackish.md §6.3)
   regression_tol: 0.01
 
-# Pre-registered endpoints (PLAN.md §6.1). Evaluated in order; stop at the first failure.
+# Pre-registered endpoints (PLAN_brackish.md §6.1). Evaluated in order; stop at the first failure.
 endpoints:
   primary_pair: [gate, vlm_all]
   sequential:

@@ -1,4 +1,4 @@
-"""Stage order of one run (PLAN.md v6). Each stage writes into the run folder; later stages read those files.
+"""Stage order of one run (PLAN_brackish.md v6). Each stage writes into the run folder; later stages read those files.
 
 S1 yolo     YOLO + ByteTrack on every frame of the split's videos -> detections, track summaries
 S2 labels   y per box (AAU IoU) and per track; GT objects the detector missed

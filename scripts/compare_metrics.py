@@ -1,4 +1,4 @@
-"""④ Regression check of a dev run against the last row of metrics_history.jsonl (PLAN.md §8).
+"""④ Regression check of a dev run against the last row of metrics_history.jsonl (PLAN_brackish.md §8).
 
 Exit code 1 when accuracy/macro F1/precision/recall dropped, or ECE rose, by more than metrics.regression_tol.
 With --append the run is added to the history (do it only after a pass or an explained drop).

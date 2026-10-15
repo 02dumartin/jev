@@ -1,4 +1,4 @@
-"""Freeze t, v and tau from a full dev run into thresholds.yaml (read by the test run, PLAN.md §8)."""
+"""Freeze t, v and tau from a full dev run into thresholds.yaml (read by the test run, PLAN_brackish.md §8)."""
 
 import argparse
 from pathlib import Path

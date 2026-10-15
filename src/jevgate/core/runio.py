@@ -1,4 +1,4 @@
-"""Run folders: naming (runs/<YYMMDD>_<name>) and the fixed layout of one run (PLAN.md §7).
+"""Run folders: naming (runs/<YYMMDD>_<name>) and the fixed layout of one run (PLAN_brackish.md §7).
 
 runs/<run_id>/
 ├── README.md, run.yaml

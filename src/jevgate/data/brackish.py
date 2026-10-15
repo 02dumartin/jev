@@ -1,4 +1,4 @@
-"""Brackish data access: split frame lists and AAU ground truth (PLAN.md §2).
+"""Brackish data access: split frame lists and AAU ground truth (PLAN_brackish.md §2).
 
 GT rules:
 - AAU CSV is the ground-truth source (covers train/valid/test; COCO json lacks valid).

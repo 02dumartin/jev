@@ -1,4 +1,4 @@
-"""⑤ Jev (TypeSafe API) on track summaries + the small VLM's description (PLAN.md v7 §4.2). Text only.
+"""⑤ Jev (TypeSafe API) on track summaries + the small VLM's description (PLAN_brackish.md v7 §4.2). Text only.
 
 One Noul question per track over a shared state (the tracks of one video, in chunks):
 `<uid>|ok`  "Is this track a real <majority class>?" -> p_ok.

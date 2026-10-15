@@ -1,4 +1,4 @@
-"""② Data contracts for one run folder (PLAN.md §3). Exit code 1 if any contract is violated."""
+"""② Data contracts for one run folder (PLAN_brackish.md §3). Exit code 1 if any contract is violated."""
 
 import argparse
 import sys
