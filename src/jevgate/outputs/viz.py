@@ -77,15 +77,42 @@ class Renderer:
             cv2.imwrite(str(out / f"{Path(f['file']).stem}.jpg"), sheet, [cv2.IMWRITE_JPEG_QUALITY, 88])
 
     def video(self, out: Path, video: str, left: str, right: str, fps: int) -> Path:
-        """Left: system `left`, right: system `right`, frame by frame (mp4v)."""
+        """Left: system `left`, right: system `right`, frame by frame (H.264 mp4: plays in VS Code and PPT)."""
         titles = dict(PANELS)
         path, writer = out / f"{video}.mp4", None
         for f in (f for f in self.frames if f["video"] == video):
             frame = np.hstack([self.panel(f, left, titles[left]), self.panel(f, right, titles[right])])
             if writer is None:
-                writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
-                                         (frame.shape[1], frame.shape[0]))
-            writer.write(frame)
+                writer = h264_writer(path, frame.shape[1], frame.shape[0], fps)
+            writer.send(np.ascontiguousarray(frame[:, :, ::-1]))
         if writer is not None:
-            writer.release()
+            writer.close()
         return path
+
+
+def h264_writer(path: Path, width: int, height: int, fps: int):
+    """Generator that takes RGB frames and encodes H.264 / yuv420p with the ffmpeg bundled in imageio-ffmpeg."""
+    import imageio_ffmpeg
+
+    writer = imageio_ffmpeg.write_frames(str(path), (width, height), fps=fps, codec="libx264", pix_fmt_in="rgb24",
+                                         pix_fmt_out="yuv420p", quality=7, macro_block_size=2,
+                                         output_params=["-movflags", "+faststart"])
+    writer.send(None)  # start the generator
+    return writer
+
+
+def transcode_h264(src: Path, dst: Path) -> None:
+    """Re-encode any video OpenCV can read (e.g. mp4v) to H.264."""
+    cap = cv2.VideoCapture(str(src))
+    fps = int(round(cap.get(cv2.CAP_PROP_FPS))) or 15
+    writer = None
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if writer is None:
+            writer = h264_writer(dst, frame.shape[1], frame.shape[0], fps)
+        writer.send(np.ascontiguousarray(frame[:, :, ::-1]))
+    cap.release()
+    if writer is not None:
+        writer.close()
