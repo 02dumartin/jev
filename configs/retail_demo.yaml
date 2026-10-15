@@ -84,17 +84,15 @@ questions:
     title: Staff action
     instructions: What should a staff member do next?
     criteria: {none: null, offer_help: null, close_fridge: null, tidy_shelf: null, restock_check: null, keep_watching: null}
-  human_review:
-    type: noul
-    title: Needs a person to look?
-    instructions: Is the situation unclear enough that a person should look at this camera?
 
-# Code turns the answers into one action badge (first matching rule wins). The last rule takes Jev's staff_action
-# choice; when that choice is not sure the badge says so.
+# Code turns the answers into one action badge (first matching rule wins). `unsure_in` sends the clip to a manager
+# when any of the listed cards is below jev.confident: Jev's own probabilities decide when a person must look.
+# The last rule takes the staff_action choice.
 actions:
   - {badge: "CLOSE FRIDGE", when: {fridge_open: ">=0.75"}, color: "#3CC8FF"}
   - {badge: "OFFER HELP", when: {needs_help: ">=0.75"}, color: "#FF8C1A"}
-  - {badge: "MANAGER CHECK", when: {human_review: ">=0.5"}, color: "#FFE135"}
+  - {badge: "MANAGER CHECK", when: {unsure_in: [needs_help, product_taken, fridge_open, crowding, shopper_activity]},
+     color: "#FFE135"}
   - from_choice: staff_action
     badges:
       none: {badge: "NO ACTION", color: "#4ED36B"}
@@ -108,10 +106,28 @@ render:
   clips_in_video: 24              # dashboard video: this many clips, chosen for variety
   seed: 0
   fps: 6                          # the clips' own frame rate
-  hold_s: 2.5                     # freeze on the last frame with the full decision
-  canvas: [1600, 900]
-  title: "Store camera  →  VLM observes  →  Jev decides (one request, many questions)  →  code acts"
+  hold_s: 3.0                     # freeze on the last frame with the full decision
+  canvas: [1920, 1080]
+  title: "Store and Next acts"
   credit: "Video: RetailAction (Standard AI), Standard.AI Dataset License. Faces blurred by the dataset."
+  font_dir: assets/fonts          # Noto Sans KR (copied from detect-and-reason, OFL)
+  fonts: {regular: NotoSansKR-Regular.ttf, medium: NotoSansKR-Medium.ttf, bold: NotoSansKR-Bold.ttf}
+  colors: {background: "#FAF8F2", panel: "#FFFFFF", title: "#333333", ink: "#2B2B2B", muted: "#7A7A7A",
+           line: "#E3DED3", sure: "#3F9E5A", unsure: "#E0A800", bar: "#4C78A8", bar_bg: "#ECE8DF"}
+
+# Comparison path shown in the top-right panel: the same VLM looks at the same frames and answers the same
+# questions itself (one generation, no probabilities).
+vlm_only:
+  enabled: true
+  max_new_tokens: 200
+  prompt: >-
+    These are {n} frames in time order from a ceiling camera in a convenience store (faces are blurred, the view is
+    rotated so people stand upright). {events}Answer each question as compact JSON with exactly these keys,
+    using only the allowed values:
+    {questions}
+
+# Reuse VLM states from an earlier run of this config (same frames, prompt and model) instead of re-generating.
+reuse_states_from: null
 
 budget:
   max_jev_requests: 3000

@@ -63,6 +63,30 @@ class Observer:
         return imgs, self.v["prompt"].format(n=len(imgs), events=ev), idx
 
     @torch.inference_mode()
+    def answer(self, frames: list[np.ndarray], events: list[dict]) -> dict:
+        """VLM-only path: the same frames, the configured questions answered directly as JSON (no probabilities)."""
+        from jevgate.demo.decide import option_values
+
+        imgs, _, idx = self.inputs_for(frames, events)
+        qs = "\n".join(f"- {k}: {q['instructions']} One of: {', '.join(option_values(q))}"
+                        for k, q in self.cfg["questions"].items())
+        ev = events_sentence(events, idx) if self.cfg["events"]["enabled"] else ""
+        prompt = self.cfg["vlm_only"]["prompt"].format(n=len(imgs), events=ev, questions=qs)
+        raw, seconds = self._generate(imgs, prompt, self.cfg["vlm_only"]["max_new_tokens"])
+        return {"answers": parse_state(raw), "raw": raw, "prompt": prompt, "vlm_s": round(seconds, 3)}
+
+    def _generate(self, imgs, prompt: str, max_new_tokens: int) -> tuple[str, float]:
+        msgs = [{"role": "user", "content": [{"type": "image"} for _ in imgs] + [{"type": "text", "text": prompt}]}]
+        text = self.processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[text], images=[imgs], return_tensors="pt").to(self.v["device"])
+        torch.cuda.synchronize()
+        started = time.perf_counter()
+        out = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        torch.cuda.synchronize()
+        raw = self.processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0]
+        return raw, time.perf_counter() - started
+
+    @torch.inference_mode()
     def observe(self, frames: list[np.ndarray], events: list[dict]) -> dict:
         imgs, prompt, idx = self.inputs_for(frames, events)
         msgs = [{"role": "user", "content": [{"type": "image"} for _ in imgs] + [{"type": "text", "text": prompt}]}]

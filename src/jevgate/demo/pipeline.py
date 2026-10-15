@@ -4,7 +4,8 @@ runs/<YYMMDD>_retail-demo/
 ├── README.md, run.yaml
 ├── data/                 links: clips, meta.jsonl, LICENSE, NOTICE.txt
 ├── vlm/input/            prompts.jsonl, frames/<sample>.jpg (the frames the VLM saw, events circled)
-├── vlm/output/           states.jsonl
+├── vlm/output/           states.jsonl (or reused from reuse_states_from)
+├── vlm_only/             input/prompts.jsonl, output/answers.jsonl (the VLM answers the questions itself)
 ├── jev/input/            requests.jsonl (one request per clip, every question)
 ├── jev/output/           responses.jsonl, decisions.jsonl (cards), single.jsonl (one request per question)
 ├── actions/actions.jsonl
@@ -26,7 +27,7 @@ from PIL import Image
 
 from jevgate.core.runio import git_info, link, next_run_dir, read_jsonl, write_jsonl
 from jevgate.demo.clip import read_frames
-from jevgate.demo.decide import Decider, action
+from jevgate.demo.decide import Decider, action, vlm_cards
 from jevgate.judges.base import Budget
 
 
@@ -76,34 +77,54 @@ class DemoRun:
                                                            sort_keys=False, allow_unicode=True))
         for name in (cfg["data"]["clips_dir"], cfg["data"]["meta"], *cfg["data"]["license_files"]):
             link(self.root / name, self.path / "data" / name)
+        self.answers: dict[str, dict] = {}
 
     def p(self, rel: str) -> Path:
         out = self.path / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         return out
 
-    def observe(self, metas: list[dict]) -> dict[str, dict]:
-        from jevgate.demo.observe import Observer
+    def observe(self, metas: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
+        """VLM states (generated, or reused from an earlier run) and the VLM-only answers."""
+        reuse = self.cfg.get("reuse_states_from")
+        states = ({r["sample_id"]: r for r in read_jsonl(self.repo / reuse / "vlm/output/states.jsonl")}
+                  if reuse else {})
+        if reuse:
+            log(f"  VLM states reused from {reuse}")
+        need_answers = self.cfg["vlm_only"]["enabled"]
+        answers, prompts, answer_prompts = {}, [], []
+        if not reuse or need_answers:
+            from jevgate.demo.observe import Observer
 
-        obs_model, states, prompts = Observer(self.cfg), {}, []
-        for k, m in enumerate(metas, 1):
-            frames = read_frames(self.root / self.cfg["data"]["clips_dir"] / f"{m['sample_id']}.mp4", m["rotation_cw"])
-            o = obs_model.observe(frames, m["events"])
-            contact_sheet(o.pop("images")).save(self.p(f"vlm/input/frames/{m['sample_id']}.jpg"), quality=88)
-            prompts.append({"sample_id": m["sample_id"], "prompt": o["prompt"], "frame_indices": o["frame_indices"]})
-            states[m["sample_id"]] = {"sample_id": m["sample_id"], **{k2: o[k2] for k2 in ("state", "raw", "vlm_s")}}
-            if k % 20 == 0:
-                log(f"  VLM {k}/{len(metas)}")
-        write_jsonl(self.p("vlm/input/prompts.jsonl"), prompts)
-        write_jsonl(self.p("vlm/output/states.jsonl"), states.values())
-        del obs_model
-        import gc
+            vlm = Observer(self.cfg)
+            for k, m in enumerate(metas, 1):
+                sid = m["sample_id"]
+                frames = read_frames(self.root / self.cfg["data"]["clips_dir"] / f"{sid}.mp4", m["rotation_cw"])
+                if not reuse:
+                    o = vlm.observe(frames, m["events"])
+                    contact_sheet(o.pop("images")).save(self.p(f"vlm/input/frames/{sid}.jpg"), quality=88)
+                    prompts.append({"sample_id": sid, "prompt": o["prompt"], "frame_indices": o["frame_indices"]})
+                    states[sid] = {"sample_id": sid, **{k2: o[k2] for k2 in ("state", "raw", "vlm_s")}}
+                if need_answers:
+                    a = vlm.answer(frames, m["events"])
+                    answer_prompts.append({"sample_id": sid, "prompt": a.pop("prompt")})
+                    answers[sid] = {"sample_id": sid, **a}
+                if k % 20 == 0:
+                    log(f"  VLM {k}/{len(metas)}")
+            del vlm
+            import gc
 
-        import torch
+            import torch
 
-        gc.collect()
-        torch.cuda.empty_cache()
-        return states
+            gc.collect()
+            torch.cuda.empty_cache()
+        if prompts:
+            write_jsonl(self.p("vlm/input/prompts.jsonl"), prompts)
+        write_jsonl(self.p("vlm/output/states.jsonl"), (states[m["sample_id"]] for m in metas))
+        if answers:
+            write_jsonl(self.p("vlm_only/input/prompts.jsonl"), answer_prompts)
+            write_jsonl(self.p("vlm_only/output/answers.jsonl"), (answers[m["sample_id"]] for m in metas))
+        return states, answers
 
     def decide(self, metas: list[dict], states: dict[str, dict]) -> dict[str, dict]:
         decider, cfg = Decider(self.cfg, Budget(self.cfg)), self.cfg
@@ -118,6 +139,11 @@ class DemoRun:
         with ThreadPoolExecutor(cfg["jev"]["max_concurrency"]) as pool:
             for sid, dec, single in pool.map(one, metas):
                 out[sid] = {"dec": dec, "single": single, "action": action(cfg, dec["cards"])}
+        for m in metas:
+            a = self.answers.get(m["sample_id"])
+            if a:
+                cards = vlm_cards(cfg, a["answers"])
+                out[m["sample_id"]]["vlm_only"] = {"cards": cards, "action": action(cfg, cards), "vlm_s": a["vlm_s"]}
         order = [m["sample_id"] for m in metas]
         write_jsonl(self.p("jev/input/requests.jsonl"), ({"sample_id": s, "request": out[s]["dec"]["request"]}
                                                            for s in order))
@@ -128,7 +154,9 @@ class DemoRun:
                                                              for s in order))
         if cfg["jev"]["single_question_compare"]:
             write_jsonl(self.p("jev/output/single.jsonl"), ({"sample_id": s, **out[s]["single"]} for s in order))
-        write_jsonl(self.p("actions/actions.jsonl"), ({"sample_id": s, **out[s]["action"]} for s in order))
+        write_jsonl(self.p("actions/actions.jsonl"),
+                    ({"sample_id": s, "jev": out[s]["action"], "vlm_only": out[s].get("vlm_only", {}).get("action")}
+                     for s in order))
         return out
 
     def summary(self, metas, states, decs) -> dict:
@@ -161,7 +189,20 @@ class DemoRun:
             "clips_without_pose_axis": sum(m["pose_axis"] is None for m in metas),
             "unparsed_states": sum("raw" in states[s]["state"] for s in ids),
             "jev_models": sorted({decs[s]["dec"]["model"] for s in ids}),
+            "vlm_only": self.vlm_only_summary(ids, decs),
         }
+
+    @staticmethod
+    def vlm_only_summary(ids, decs) -> dict | None:
+        rows = [decs[s]["vlm_only"] for s in ids if "vlm_only" in decs[s]]
+        if not rows:
+            return None
+        return {"vlm_s_median": float(np.median([r["vlm_s"] for r in rows])),
+                "invalid_answers": sum(not c["valid"] for r in rows for c in r["cards"]),
+                "actions": dict(Counter(r["action"]["badge"] for r in rows).most_common()),
+                "same_action_as_jev_path": round(float(np.mean([decs[s]["vlm_only"]["action"]["badge"]
+                                                                 == decs[s]["action"]["badge"] for s in ids
+                                                                 if "vlm_only" in decs[s]])), 3)}
 
     def render(self, metas, states, decs) -> Path:
         from jevgate.demo.render import Dashboard, render_clip
@@ -169,16 +210,14 @@ class DemoRun:
 
         rows = [m | {"action": decs[m["sample_id"]]["action"]} for m in metas]
         chosen = pick_for_video(rows, self.cfg["render"]["clips_in_video"], self.cfg["render"]["seed"])
-        dash = Dashboard(self.cfg)
+        dash = Dashboard(self.cfg, self.repo)
         path = self.p("evaluation/dashboard.mp4")
         writer = h264_writer(path, dash.W, dash.H, self.cfg["render"]["fps"])
         for k, m in enumerate(chosen, 1):
             sid = m["sample_id"]
             frames = read_frames(self.root / self.cfg["data"]["clips_dir"] / f"{sid}.mp4", m["rotation_cw"])
-            render_clip(dash, writer, frames, m, k, len(chosen), states[sid], decs[sid]["dec"], decs[sid]["single"],
-                        decs[sid]["action"])
-            last = dash.frame(frames[-1], m, len(frames), k, len(chosen), states[sid], decs[sid]["dec"],
-                              decs[sid]["single"], decs[sid]["action"], 1.0)
+            render_clip(dash, writer, frames, m, k, len(chosen), states[sid], decs[sid])
+            last = dash.frame(frames[-1], m, len(frames), k, len(chosen), states[sid], decs[sid], 1.0)
             Image.fromarray(last).save(self.p(f"evaluation/stills/{k:02d}_{sid}.png"))
         writer.close()
         return path
@@ -188,8 +227,8 @@ class DemoRun:
         if self.cfg["run"].get("max_clips"):
             metas = metas[: self.cfg["run"]["max_clips"]]
         log(f"run folder {self.path}: {len(metas)} clips")
-        states = self.observe(metas)
-        log(f"VLM done: median {np.median([s['vlm_s'] for s in states.values()]):.2f} s per clip")
+        states, self.answers = self.observe(metas)
+        log(f"VLM done: median {np.median([states[m['sample_id']]['vlm_s'] for m in metas]):.2f} s per clip")
         decs = self.decide(metas, states)
         log("Jev done")
         summ = self.summary(metas, states, decs)

@@ -70,9 +70,11 @@ class Decider:
 
 
 def check(rule_value, card: dict) -> bool:
-    """'>=0.75' against a Boolean card's yes-probability."""
+    """'>=0.75' against a Boolean card's yes-probability (a card without a probability never matches)."""
     op, thr = rule_value[:2], float(rule_value[2:])
     p = card["p"] if card["p"] is not None else card["top"]
+    if p is None:
+        return False
     return p >= thr if op == ">=" else p <= thr
 
 
@@ -82,15 +84,40 @@ def action(cfg: dict, cards: list[dict]) -> dict:
     for rule in cfg["actions"]:
         if "from_choice" in rule:
             c = by_key[rule["from_choice"]]
-            b = rule["badges"][c["value"]]
+            b = rule["badges"].get(c["value"], {"badge": "UNKNOWN", "color": "#9A9A9A"})
             return {"badge": b["badge"], "color": b["color"], "rule": {"from_choice": c["key"]}, "sure": c["sure"],
                     "p": c["top"]}
         ok = True
         for k, v in rule["when"].items():
             if k == "any_unsure":
                 ok &= any(not c["sure"] for c in cards) == v
+            elif k == "unsure_in":
+                ok &= any(not by_key[q]["sure"] for q in v)
             else:
                 ok &= check(v, by_key[k])
         if ok:
-            return {"badge": rule["badge"], "color": rule["color"], "rule": rule["when"], "sure": True}
+            why = [by_key[q]["title"] for q in rule["when"].get("unsure_in", []) if not by_key[q]["sure"]]
+            return {"badge": rule["badge"], "color": rule["color"], "rule": rule["when"], "sure": True,
+                    "reason": f"unsure: {', '.join(why)}" if why else None}
     return {"badge": "NO ACTION", "color": "#4ED36B", "rule": {}, "sure": True}
+
+
+def option_values(q: dict) -> list[str]:
+    """Allowed answers for a question in the VLM-only path."""
+    if q["type"] == "noul":
+        return ["yes", "no"]
+    return list(q["criteria"])
+
+
+def vlm_cards(cfg: dict, answers: dict) -> list[dict]:
+    """VLM-only answers as cards: a plain value, no probabilities (sure by construction, top = None)."""
+    cards = []
+    for key, q in cfg["questions"].items():
+        raw = str(answers.get(key, "")).strip().lower().replace(" ", "_")
+        opts = option_values(q)
+        match = next((o for o in opts if o.lower().replace(" ", "_") == raw), None)
+        value = ("YES" if match == "yes" else "NO") if q["type"] == "noul" and match else (match or "?")
+        p = (1.0 if match == "yes" else 0.0) if q["type"] == "noul" and match else None
+        cards.append({"key": key, "title": q["title"], "type": q["type"], "value": value, "probs": {},
+                      "top": None, "sure": True, "p": p, "valid": match is not None})
+    return cards

@@ -9,3 +9,15 @@ __pycache__/
 # data and outputs (data lives outside git; runs are reproduced from config + commit)
 data/
 runs/
+
+# logs
+
+# etc
+.claude/
+.github/
+# yolo training outputs and downloaded weights
+train/
+*.pt
+
+# fonts copied from detect-and-reason (Noto Sans KR, OFL); 6 MB each, kept out of git
+assets/fonts/*.ttf
