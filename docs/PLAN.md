@@ -1,328 +1,237 @@
-# jev-gate 실험 계획 (v4, 2026-10-14)
+# jev-gate 실험 계획 (v6, 2026-10-15)
 
-> 질문: Grounding DINO가 낸 후보 박스가 **무엇인가**(6종 생물 또는 background)를 판정할 때,
-> Jev(calibrated 확률)를 게이트로 쓰면 VLM 호출을 줄이면서 정확도를 유지할 수 있는가?
+> 질문: 학습한 detector(YOLO12s)와 tracker가 만든 **track이 맞는지**(진짜 그 클래스의 동물인지)를 판정할 때,
+> Jev(calibrated 확률)를 게이트로 써서 **확실한 track은 Jev가 처리하고 애매한 track만 VLM에 넘기면**,
+> 모든 track을 VLM이 보는 것과 같은 정확도를 VLM 호출을 줄이면서 얻을 수 있는가?
 >
-> **v4 (2026-10-14): 평가는 GT 박스로 한다.** 후보 = AAU GT 박스(전부 실제 동물) → background 없는 6-way 분류,
-> ① detector 없음, Jev는 박스 크기·위치·움직임(이전 프레임 GT 박스 위치, 클래스 제외)만 본다. DINO 방식은 `configs/dino.yaml`로 보존.
-> run 폴더 구성과 그림 4장은 `src/jevgate/runio.py`·`plots.py` docstring과 각 run의 README.md 참고.
->
-> v3 (test 결과를 보기 전, 2026-10-14): 원본 train+valid = dev / test = test (전체 데이터), Jev에게 class와 need_vlm(5단계)을 함께 묻고
-> need_vlm이 높은 박스만 VLM으로 넘기는 게이트를 primary로, 시간 기록 보강. §14 참고. n 수는 `docs/DATA.md`.
+> v6에서 바뀐 것: 후보는 Grounding DINO가 아니라 **영상 단위 분할로 학습한 YOLO12s + ByteTrack**,
+> 판정 단위는 박스가 아니라 **track**, Jev 질문은 Noul 하나(`track_ok`)가 게이트를 정한다. 이전 버전은 §14.
 
 ---
 
-## 1. 클래스와 비교할 시스템
+## 1. 구성 요소
 
-### 1.1 클래스 (7개)
-`fish · small_fish · crab · shrimp · jellyfish · starfish · background`
+| 구성 | 무엇 | 입력 | 출력 |
+|---|---|---|---|
+| Detector | YOLO12s `train/yolo12s_video/weights/best.pt` (영상 단위 분할로 학습, best epoch 35) | 프레임 이미지 | 프레임별 박스, 클래스(6종), conf |
+| Tracker | ByteTrack (Ultralytics), conf 0.1 | detector 박스 | 박스마다 track id |
+| Jev | TypeSafe API, `jev-latest`. **텍스트만 받는다** | track 요약 증거 (§4) | `track_ok` p (Noul), `class_fix` 분포 (Choice, 탐색용) |
+| VLM | Qwen3-VL-8B-Instruct (로컬) | track 대표 프레임: 전체 프레임 + 빨간 박스, 확대 crop | "진짜 <클래스>인가?" Yes/No 확률 p_yes |
 
-- 앞의 6개는 AAU GT 태그를 그대로 쓴다. `background`는 "후보 박스 안에 생물이 없음"이다.
-- `background`가 없으면 탁도·부유물에 잡힌 가짜 후보에도 생물 클래스를 억지로 붙이게 되므로 반드시 둔다.
-- DINO 프롬프트: `fish . small fish . crab . shrimp . jellyfish . starfish .` (`small fish` → `small_fish`로 매핑)
+### 1.1 클래스
+`fish · small_fish · crab · shrimp · jellyfish · starfish` (AAU 태그 그대로). 판정 결과로 박스를 지우면 `background`(동물 아님)가 된다.
 
-### 1.2 시스템 (표의 행)
-
-모든 시스템은 **같은 DINO 후보 박스**를 받아 박스마다 7개 클래스 중 하나와 클래스별 확률을 낸다.
-
-| # | 시스템 | 판정 방식 | 클래스별 점수 (ROC·ECE용) | 정할 임계값 |
-|---|---|---|---|---|
-| ① | 기존 detector | DINO score ≥ `t`면 DINO 라벨, 아니면 background | 라벨 클래스 = score, background = 1 − score, 나머지 0 | `t` (dev, 정확도 최대) |
-| ② | DINO + VLM | Qwen3-VL-8B가 crop을 보고 선택지 A~G 중 하나 | 선택지 글자 토큰 7개의 softmax (forward 1번) | 없음 |
-| ③ | DINO + Jev | Jev `choice` 질문 (선택지 7개) + `need_vlm` score 질문 (1~5단계) | Jev `probabilities` | 없음 (argmax 고정) |
-| ④ (primary) | Jev need_vlm 게이트 | need_vlm ≥ `τ_e`인 박스만 VLM 답, 나머지는 Jev 답 | 경로별 원래 점수 (ROC는 점으로만) | `τ_e` (dev) |
-| ④a | Jev 확신도 게이트 | Jev 최고 확률 < `τ_c`면 VLM | 〃 | `τ_c` (dev) |
-| ④c | 둘 중 하나 | 둘 중 하나라도 걸리면 VLM | 〃 | `τ_e`, `τ_c` |
-
-- ④는 ②와 ③의 판정 파일을 조합해서 계산한다. 추가 실행이 필요 없다.
-- **Jev는 텍스트만 받는다** ("Jev accepts text only"). ③은 픽셀이 아니라 **구조화된 증거**(§4)로 판정한다. 클래스 구분 근거가 DINO 라벨·크기·위치·움직임뿐이라 사실상 DINO 라벨을 재보정하는 수준일 수 있다. 발표에서 반드시 밝힌다.
-- ②와 ③은 같은 질문 문장, 같은 클래스 설명, 같은 DINO 제안 정보(라벨·score)를 받는다. ②는 이미지, ③은 텍스트 증거를 추가로 본다.
-- 각 τ는 dev에서 "자동 처리분 오류율 ≤ 0.05인 설정 중 자동 처리가 가장 많은 값"으로 정한다.
-- (탐색, P2) ③′: 같은 텍스트 증거를 Qwen3-VL에 이미지 없이 넣는 대조군.
+### 1.2 track과 다수결 클래스
+- YOLO는 프레임마다 따로 클래스를 붙인다. track의 **다수결 클래스** = track 안 박스들에서 가장 많이 나온 클래스 (동점이면 conf 합이 큰 쪽).
+- **판단은 track 단위, 결과는 박스에 물려준다.** track이 수용되면 그 track의 모든 박스가 다수결 클래스가 되고, 거부되면 모든 박스가 background가 된다.
+- ByteTrack이 track으로 확정하지 않은 박스(한두 프레임만 나온 탐지)는 **제거**(background)한다. 그중 진짜 동물 수는 따로 보고한다.
 
 ## 2. 데이터와 정답
 
-### 2.1 정답 소스
-- **AAU CSV** (`annotations/annotations_AAU/{train,valid,test}.csv`)를 GT로 쓴다. 12,444장, 박스 35,565개.
-  - COCO json에는 valid 분할이 없고, YOLO는 빈 파일 1,449장에 실제 박스가 누락돼 있다.
-- 분할 목록에 있지만 AAU에 없는 프레임 → `gt_status = empty_by_absence` (생물 없음). 기본 포함, 민감도 분석으로 제외.
-- 분할 목록 밖 프레임(410장, 한 영상) → `gt_status = unknown`, 채점 제외. 해당 영상은 클립 후보에서 뺀다.
-- AAU `Object ID`는 채점·분석에만 쓴다. Jev와 VLM 입력에는 넣지 않는다.
+### 2.1 분할 (`configs/splits/video_split.yaml`, 고정)
+| 용도 | 영상 | 프레임 | 쓰임 |
+|---|---|---|---|
+| train | 63 | 10,593 | YOLO 학습만 |
+| **dev** | 13 (= YOLO val 영상) | 2,030 | `t`, `v`, `τ` 결정, 프롬프트 점검 |
+| **test** | 13 | 2,051 | 설정 고정 후 한 번만 평가 |
 
-### 2.2 박스 정답 y
-| 후보 박스와 GT의 최대 IoU | y |
+- 한 영상은 한 분할에만 들어간다. 원본 프레임 무작위 분할(`train.txt` 등)은 같은 영상의 이웃 프레임이 train/test에 섞여 성능이 부풀려지므로 쓰지 않는다 (`yolo12s_orig` test mAP50 0.99 vs `yolo12s_video` 0.55).
+- dev 영상은 YOLO의 best epoch를 고를 때도 쓰였다. 판정 단계의 임계값을 정하는 데 다시 쓰는 것은 허용하되, 각주로 밝힌다.
+
+### 2.2 박스 정답 y_box
+- 정답 소스: AAU CSV. 같은 프레임의 GT 박스와 클래스 무관 IoU로 매칭한다 (최대 IoU 기준).
+
+| 최대 IoU | y_box |
 |---|---|
-| ≥ 0.5 | 매칭된 GT 물체의 클래스 |
+| ≥ 0.5 | 매칭된 GT의 클래스 |
 | < 0.3 | `background` |
-| 0.3 ~ 0.5 | `ambiguous` → 채점 제외, 개수 보고 (민감도: background로 넣기) |
+| 0.3 ~ 0.5 | `ambiguous` → 채점 제외, 개수 보고 |
 
-- IoU는 클래스 무관으로 계산하고, 가장 많이 겹친 GT의 클래스를 y로 쓴다.
-- GT 박스는 프레임 경계로 자른 뒤 IoU를 계산한다.
-- 후보는 클래스 무관 NMS(IoU 0.5) 후 라벨링한다.
+- GT 박스는 프레임 경계로 자른 뒤 IoU를 계산한다. 어떤 YOLO 박스와도 IoU ≥ 0.5로 맞지 않은 GT는 **놓친 물체**로 세고, 어떤 판정기도 되살릴 수 없다 (recall 상한, 각주).
 
-### 2.3 분할 (v3: 원본 분할, 전체 데이터)
+### 2.3 track 정답 y_track (calibration·τ 결정용)
+- y_track = 1: track의 채점 대상 박스 중 **절반 이상이 다수결 클래스의 GT**와 맞음 (= 수용이 맞는 track).
+- y_track = 0: 그렇지 않음. 유형을 `false`(대부분 background), `misclassified`(다른 동물)로 나눠 기록한다.
+- 채점 대상 박스가 없는 track(전부 ambiguous)은 y_track = null, 채점 제외.
 
-- dev = 원본 `train.txt` + `valid.txt` 13,206프레임, test = 원본 `test.txt` 1,468프레임. 자세한 n 수는 `docs/DATA.md`.
-- 원본은 프레임 단위 무작위 분할이라 모든 영상이 양쪽에 있다 → 결과에 각주로 밝힌다.
-- Jev 증거의 시간 특징은 같은 영상의 이전 K프레임(분할과 무관)의 **DINO 출력만** 쓴다. GT는 쓰지 않는다.
+## 3. 비교할 시스템 (표의 행)
 
-### (v2 기록) 클립 분할 — v3에서 폐기
-v1 클립 3개는 shrimp·jellyfish가 없고 dev에 fish·crab이 없어서, **dev와 test 각각이 6종을 모두 포함**하도록 다시 골랐다. v1 test 클립 2개는 그대로 유지했다.
-
-| 용도 | 영상 | 프레임 | GT 박스 (AAU) |
+| # | 시스템 | track 판정 | 정할 값 (dev) |
 |---|---|---|---|
-| dev | `2019-03-19_17-02-30to2019-03-19_17-02-42_1` | 183 | small_fish 233, starfish 173 |
-| dev | `2019-02-21_06-36-31to2019-02-21_06-36-39_1` | 120 | crab 240, shrimp 77, starfish 120 |
-| dev | `2019-02-20_19-43-37to2019-02-20_19-43-46_1` | 130 | fish 89, crab 130 |
-| dev | `2019-03-20_05-40-25to2019-03-20_05-40-33_1` | 118 | jellyfish 57 |
-| test | `2019-03-21_05-01-24to2019-03-21_05-01-31_1` | 110 | small_fish 74, crab 440, starfish 110 |
-| test | `2019-03-19_19-30-33to2019-03-19_19-30-45_1` | 185 | fish 97, starfish 182 |
-| test | `2019-02-22_22-18-13to2019-02-22_22-18-20_1` | 111 | shrimp 71, starfish 111 |
-| test | `2019-03-20_15-15-12to2019-03-20_15-15-19_1` | 111 | jellyfish 87 |
+| ① | `yolo` | track 없이 프레임별: conf ≥ `t`면 YOLO 클래스, 아니면 background | `t` (박스 정확도 최대) |
+| ② | `track_vote` | 모든 track 수용 (판정기 없음, tracking 효과만) | – |
+| ③ | `vlm_all` | 모든 track을 VLM에: p_yes ≥ `v`면 수용 | `v` (track 정확도 최대) |
+| ④ | `jev` | Jev p ≥ 0.5면 수용 | – (0.5 고정: calibration을 믿는 설정) |
+| ⑤ | **`gate` (primary)** | p ≥ τ면 수용, p ≤ 1−τ면 거부, 그 사이는 ③의 VLM 판정 | `τ` |
 
-- 합계: dev 551프레임 (fish 89 · small_fish 233 · crab 370 · shrimp 77 · jellyfish 57 · starfish 293), test 517프레임 (fish 97 · small_fish 74 · crab 440 · shrimp 71 · jellyfish 87 · starfish 403).
-- 바꾸려면 §7의 변경 의도 질문을 거친다.
+- ⑤는 ③과 ④의 판정 파일을 조합한다 (추가 실행 없음). VLM 지연은 넘긴 track만 더한다.
+- `τ`: dev에서 "Jev가 혼자 처리한 track의 오류율 ≤ 0.05"인 설정 중 혼자 처리한 track이 가장 많은 값. 없으면 τ > 1(전부 VLM).
+- ②~⑤에서 untracked 박스는 모두 background로 같다. 시스템 사이 차이는 track 판정에서만 생긴다.
+- ③과 ④는 **같은 질문 문장**을 받는다: "Is this track a real `<다수결 클래스>`?" (§4, §5)
 
-## 3. 파이프라인: 단계별 데이터와 남길 산출물
+## 4. Jev 입력과 질문
 
-각 단계는 앞 단계의 **파일만** 읽는다. "데이터"는 다음 단계가 읽는 파일, "보고용"은 사람이 보는 파일이다.
-
-| 단계 | 데이터 (다음 단계 입력) | 보고용 산출물 | 계약 (`check_contracts.py`) |
-|---|---|---|---|
-| S0 meta | `config.resolved.yaml`, `git.json`, `env.json` | `run.log`, `timing.json` | 파일 존재 |
-| S1 frames | `frames.jsonl` | – | 클립별 프레임 수 = 이미지 수 |
-| S2 detect | `candidates.jsonl` | `detect_summary.json`, `viz/frames/dino/`, `viz/videos/*_dino.*` | 박스가 프레임 안, score ∈ [0,1], cand_id 고유, label ∈ 6종 |
-| S3 label | `labels.jsonl` | `label_summary.json` + `.md`, `plots/dino_vs_gt_confusion.png`, `viz/frames/gt/` | candidates와 1:1, y ∈ 7종 ∪ {ambiguous, null} |
-| S4 evidence | `evidence.jsonl` | – | 이전 프레임만 참조 (미래 누설 0) |
-| S5 judge | `decisions/{threshold,vlm,jev}.jsonl` | `raw/jev_responses.jsonl`, `raw/vlm_outputs.jsonl`, `usage.json` | 시스템마다 후보 수 동일, 확률 합 = 1 ± 0.02 |
-| S6 gate | `decisions/gate.jsonl` | `tau_curve.csv`, (dev) `thresholds.yaml` | `routed_to=vlm`인 행은 ② 판정과 일치 |
-| S7 eval | `metrics.json` | `metrics.md`, `errors.csv`, `plots/*`, (test) `endpoints.json` | 스키마 검사 |
-| S8 viz | – | `viz/frames/<system>/`, `viz/frames/compare/`, `viz/videos/`, `viz/index.html` | – |
-| ⑤ 육안 | – | `review_notes.md` (사람이 작성) | – |
-
-### 3.1 단계별 필수 필드
-| 파일 | 필드 |
-|---|---|
-| `frames.jsonl` | clip, split, frame_idx, file, gt_status |
-| `candidates.jsonl` | cand_id, clip, frame_idx, box_xyxy, dino_label, dino_score |
-| `labels.jsonl` | cand_id, max_iou, y, matched_object_id, matched_gt_label, scored |
-| `evidence.jsonl` | cand_id, history_frame_idxs, detector, geometry, track, scene |
-| `decisions/*.jsonl` | cand_id, pred, probs{7종}, confidence, latency_ms, (jev) tokens_in/out, (gate) routed_to |
-
-### 3.2 보고용 산출물 내용
-| 파일 | 내용 |
-|---|---|
-| `env.json` | 패키지 버전, GPU 이름, DINO·VLM 모델 revision, Jev 응답의 `model` 버전 |
-| `timing.json` | 단계별 wall-clock |
-| `detect_summary.json` | NMS 전/후 후보 수, 프레임당 후보 수 분포, DINO 라벨별 개수, score 히스토그램 |
-| `label_summary.json` / `.md` | **개수 흐름표**(아래), GT 클래스별·DINO 라벨별로 나눈 같은 표 |
-| `usage.json` | Jev 요청 수·토큰·추정 비용, VLM 호출 수·GPU-초 |
-| `metrics.md` | 결과 표(PPT·PR에 그대로 붙이는 형식) |
-| `errors.csv` | 틀린 박스 목록: cand_id, file, y, 시스템별 pred·confidence, crop 경로 |
-| `endpoints.json` | (test만) 순차 검정 단계별 통과 여부와 CI·비율 실제 값 |
-
-**개수 흐름표** (`label_summary.md`, 매 실행):
-```text
-GT 물체 N ── DINO가 IoU≥0.5로 잡음 n (recall 상한 n/N) ── 놓침 N−n
-DINO 후보 M ── 클래스 y별 개수 (6종 + background) · ambiguous a · unknown u
-              └──────── 채점 대상 M−a−u ────────┘   └─ 제외 a+u (사유별) ─┘
-```
-
-### 3.3 그림 (`plots/`)
-| 파일 | 내용 | 시스템 |
-|---|---|---|
-| `dino_vs_gt_confusion.png` | DINO 라벨 × y, 7×7 (DINO가 클래스를 맞게 붙였나) | S3 |
-| `confusion_<system>.png` | 예측 × y, 7×7, 행 정규화 % 병기 | ①②③④ |
-| `ovr_2x2_<system>.png` | 클래스별 one-vs-rest 2×2 (sens/spec 병기), 7패널 | ①②③④ |
-| `roc_<system>.png` | 클래스별 one-vs-rest ROC + AUC [95% CI], 운영점 마커 | ①②③ (④는 ①②③ 그림에 점으로) |
-| `reliability_<system>.png` | top-label confidence reliability diagram + ECE | ②③ |
-| `tau_curve.png` | τ별 자동 처리 비율 · 자동 처리분 오류율 · VLM 호출 수 | ④ |
-
-- 박스가 20개 미만인 클래스 패널은 n을 표시하고 회색 처리한다.
-- AUC CI는 프레임 블록 bootstrap(§6)으로 구한다.
-
-### 3.4 이미지와 영상 (`viz/`)
-| 경로 | 내용 |
-|---|---|
-| `viz/frames/gt/<clip>/<frame>.jpg` | GT 박스 + 클래스 |
-| `viz/frames/dino/<clip>/<frame>.jpg` | DINO 후보 + 라벨 + score, 테두리 색 = y |
-| `viz/frames/<system>/<clip>/<frame>.jpg` | 시스템별 판정 (①②③④) |
-| `viz/frames/compare/<clip>/<frame>.jpg` | ①②③④ 2×2 한 장 |
-| `viz/videos/<clip>_<view>.webm` / `.mp4` | 위 view별 영상. webm(VP9)은 에디터용, mp4(H.264)는 PPT용 |
-| `viz/crops/errors/` | `errors.csv`의 박스 crop |
-| `viz/index.html` | 프레임 넘겨 보기, view 전환 (VS Code/Cursor의 Live Preview 확장으로 열기) |
-
-- 색 규칙(모든 그림 공통): 맞음 = 초록 실선, 생물을 다른 생물로 = 노랑, background를 생물로(FP) = 빨강, 생물을 background로(FN) = 주황 점선, background를 background로 = 회색 점선. 라벨에 `pred (conf)`를 쓴다.
-- 영상 인코딩은 `imageio-ffmpeg`(ffmpeg 내장)로 한다. 현재 OpenCV는 H.264를 못 쓴다.
-- smoke 실행은 영상을 만들지 않는다 (`viz.videos: false`).
-
-### 3.5 runs 폴더 전체 모습
-```text
-runs/261014_dev/
-├── config.resolved.yaml      git.json      env.json      timing.json      run.log
-├── frames.jsonl              candidates.jsonl      labels.jsonl      evidence.jsonl
-├── decisions/  threshold.jsonl  vlm.jsonl  jev.jsonl  gate.jsonl
-├── raw/        jev_responses.jsonl  vlm_outputs.jsonl
-├── detect_summary.json       label_summary.json  label_summary.md   usage.json
-├── metrics.json  metrics.md  errors.csv  tau_curve.csv
-├── thresholds.yaml           (dev: t, τ, fit_split, git commit)
-├── endpoints.json            (test만)
-├── plots/      dino_vs_gt_confusion · confusion_* · ovr_2x2_* · roc_* · reliability_* · tau_curve
-├── viz/        frames/{gt,dino,threshold,vlm,jev,gate,compare}/  videos/  crops/errors/  index.html
-└── review_notes.md           (⑤ 사람이 작성)
-```
-
-- `run_id = <YYMMDD>_<run.name>`. 같은 날 같은 이름이면 `_2`, `_3`을 붙인다. 코드 버전은 `git.json`에서 본다.
-- `raw/`에는 API 키를 쓰지 않는다. Jev 요청 본문은 저장한다(재현용).
-- dev 결과는 레포 루트 `metrics_history.jsonl`에 한 줄씩 추가한다 (git 추적).
-- 예상 용량: 프레임 551장 × view 7종 JPG + 영상 → run 하나에 수백 MB.
-
-## 4. Jev 입력: 구조화된 증거 (S4)
-
-**인과적**으로 만든다. 현재 프레임과 **이전 K 프레임의 DINO 후보만** 쓰고, GT와 미래 프레임은 쓰지 않는다.
+### 4.1 state (track 하나, 텍스트)
+판정 시점은 **track이 끝난 뒤**(오프라인 영상 검수 시나리오)이므로 track 전체 구간을 쓴다. GT, 영상 이름, track id는 넣지 않는다.
 
 | 그룹 | 필드 |
 |---|---|
-| 검출기 | DINO 라벨, dino_score |
-| 기하 | 면적 비율, 가로·세로 px, 가로세로비, 정규화 중심 (x, y), 프레임 경계 접촉 |
-| 시간 (이전 K프레임) | 연속 등장 횟수 (IoU ≥ 0.3), 직전 프레임과의 최대 IoU, 이동량/대각선, 면적 변화율, 트랙 평균 score |
-| 장면 | 이 프레임의 후보 수 |
+| 길이 | length_frames, span_frames, gap_frames, starts_at_video_start, ends_at_video_end |
+| 클래스 | class_votes(클래스별 횟수), majority_class, majority_share |
+| conf | mean, min, max, trend (앞 절반 vs 뒤 절반) |
+| 박스 | median 가로·세로 px, median 중심 (x, y) 정규화, 경계 접촉 비율 |
+| 움직임 | 전체 이동량 / 박스 대각선, 프레임당 평균 이동 px |
+| 장면 | 같은 시간대의 다른 track 수 (클래스별) |
+| (탐색) detector 신뢰도 | YOLO의 클래스별 dev(val) precision·recall. `jev.include_detector_reliability`, 기본 false |
 
-- Jev 질문: `type: choice`, `criteria` = 7개 클래스의 설명(`classes.*.description`), `instructions` = `prompts.question`.
-- 요청 단위 `jev.batching`: `per_frame`(기본, 프레임 하나에 박스별 질문 여러 개) | `per_box`(지연 비교용).
+### 4.2 질문 (track마다 2개)
+| 키 | 형식 | 문장 | 쓰임 |
+|---|---|---|---|
+| `track_ok` | Noul | "Is this track a real `<majority_class>`?" (true = 그 동물이 맞음 / false = 다른 동물이거나 동물이 아님) | **게이트 결정. ④·⑤의 p** |
+| `class_fix` | Choice (6종 + `not_an_animal`) | "What is this track?" | 탐색: 거부한 track을 어떤 클래스로 고칠지 |
 
-## 5. Endpoint (결과를 보기 전에 고정. v1 2026-10-13, v2 2026-10-14에 다중 클래스로 갱신)
+- 요청 단위: 영상 하나의 track들을 `jev.max_tracks_per_request`개씩 묶어 한 요청으로 보낸다 (track마다 질문 2개).
+- 클래스 정의(`classes.*`)는 state에 한 번만 쓴다. VLM 프롬프트와 같은 문장이다.
+- v4의 `need_vlm` Score 질문은 뺐다: Noul p 자체가 확신도이고, v4 dev에서 need_vlm 게이트는 박스 99.9%를 VLM으로 넘겼다.
 
-모든 endpoint는 **test 분할 전체(1,468프레임)**에서, dev에서 고정한 `t`·`τ`로 **한 번만** 측정한다.
+## 5. VLM 입력
+- track의 대표 프레임 = conf가 가장 높은 박스의 프레임. 이미지 2장: 전체 프레임 + 빨간 박스, 박스 주변 확대 crop (박스 크기만큼 여유, 긴 변 336px).
+- 프롬프트: 공통 맥락 + 클래스 정의 + "Is this track a real `<majority_class>`? Answer Yes or No." → 다음 토큰의 Yes/No logit softmax = p_yes.
+- Qwen3-VL은 이 탁한 영상에서 Yes를 거의 안 한다(v1 dev: real 박스에도 p_yes ≈ 0.001). 그래서 0.5가 아니라 dev에서 정한 `v`로 자른다.
 
-### 5.1 Primary: ④는 ② 대비 정확도를 유지하면서 VLM 호출을 줄이는가
+## 6. 지표
+
+### 6.1 Endpoint (결과를 보기 전에 고정, 2026-10-15)
+test 13개 영상에서, dev에서 고정한 `t`·`v`·`τ`로 **한 번만** 측정한다.
+
+**Primary: ⑤ `gate`는 ③ `vlm_all` 대비 정확도를 유지하면서 VLM 호출을 줄이는가**
 | 지표 | 정의 | 성공 기준 |
 |---|---|---|
-| 정확도 차이 | Δacc = acc(④ need_vlm 게이트) − acc(②), 7-way 정확도, 95% CI는 프레임 블록 bootstrap | CI 하한 ≥ **−0.02** |
-| VLM 호출 비율 | ④ 호출 수 / ② 호출 수 | ≤ **0.5** |
+| 정확도 차이 | Δacc = acc(⑤) − acc(③), **박스 단위** 7-way 정확도 (6종 + background), 95% CI는 cluster bootstrap (§6.3) | CI 하한 ≥ **−0.02** |
+| VLM 호출 비율 | ⑤가 VLM에 넘긴 track 수 / 전체 track 수 | ≤ **0.5** |
 
-- 두 조건을 **동시에** 만족해야 성공이다.
-- 순차 검정 (처음 실패한 단계에서 멈춤, 재실행 없음):
-  1. Δacc CI 하한 ≥ −0.02, 호출 비율 ≤ 0.5 (primary)
-  2. Δacc CI 하한 ≥ −0.01, 호출 비율 ≤ 0.5
-  3. Δacc CI 하한 ≥ −0.01, 호출 비율 ≤ 0.3
+- 두 조건을 **동시에** 만족해야 성공이다. 순차 검정 (처음 실패에서 멈춤, 재실행 없음):
+  1. CI 하한 ≥ −0.02, 호출 비율 ≤ 0.5 (primary)
+  2. CI 하한 ≥ −0.01, 호출 비율 ≤ 0.5
+  3. CI 하한 ≥ −0.01, 호출 비율 ≤ 0.3
 - 실제 CI와 비율은 항상 보고한다. 결과를 본 뒤 기준을 느슨하게 바꾸지 않는다.
 
-### 5.2 Secondary
+**Secondary**
 | # | 질문 | 지표 |
 |---|---|---|
-| S1 | Jev 확률을 믿을 수 있나 (③) | top-label ECE (15 bin), 다중 클래스 Brier, reliability diagram |
-| S2 | dev 게이트 기준이 test에서도 지켜지나 (④) | test 자동 처리분 오류율 vs ε = 0.05, 자동 처리 비율 |
-| S2′ | Jev는 자기가 틀릴 때를 아는가 | need_vlm으로 Jev 오답을 예측하는 AUROC, need_vlm 단계별 Jev 오류율, ④ vs ④a vs ④c |
-| S3 | Jev 단독이 기존 detector보다 나은가 (③ vs ①) | 정확도 → macro F1 → 클래스별 Precision·Recall |
-| S4 | 클래스별로 어디서 갈리나 (①~④) | 클래스별 one-vs-rest AUC [CI], sens/spec |
-| S5 | 실제 속도와 비용 (①~④) | 박스당 지연 중앙값, 총 시간, 비용 |
-| S6 | 영상에서 보이는 결과 (①~④) | 프레임 단위 "생물 보임?"(pred ≠ background인 박스 ≥ 1) 정확도 |
+| S1 | Jev p를 믿을 수 있나 (④) | track 단위 ECE (15 bin), Brier, reliability diagram |
+| S2 | dev 게이트 기준이 test에서도 지켜지나 (⑤) | test 자동 처리분 오류율 vs 0.05, 자동 처리 비율 |
+| S3 | 누가 맞는 track과 틀린 track을 잘 가르나 | track 단위 ROC + AUROC [95% CI]: Jev p, VLM p_yes, track 평균 YOLO conf |
+| S4 | tracking과 판정기가 detector를 얼마나 고치나 (①→②→⑤) | 박스 정확도 → macro F1 → 클래스별 P/R, confusion matrix |
+| S5 | 속도와 비용 | 단계별 시간, track당 지연 중앙값, 영상 1개 처리 시간, Jev 토큰·비용, VLM GPU-초 |
+| S6 | 영상에서 보이는 안정성 | 프레임 간 박스 수 변화(깜빡임), track 길이 |
 
-### 5.3 탐색적 분석 (결론에 쓰지 않음)
-③′ 텍스트 증거 대조군, 민감도 분석(ambiguous를 background로, 생물 없는 프레임 제외, fish/small_fish 병합), τ 곡선.
+**탐색 (결론에 쓰지 않음)**: `class_fix` 교정 정확도, detector 신뢰도 표를 넣은 Jev, ambiguous를 background로 넣은 민감도, τ 곡선.
 
-## 6. 지표 정의
-
+### 6.2 지표 정의
 | 지표 | 정의 |
 |---|---|
-| 정확도 | pred = y인 비율 (ambiguous·unknown 제외) |
-| macro F1 | 7개 클래스 F1의 평균 (정확도 다음에 보고) |
-| 클래스별 Precision / Recall | one-vs-rest |
-| ECE | top-label confidence, 15 bin. ②③ 전체, ④는 자동 처리분 |
-| Brier | 다중 클래스 (one-hot과 확률 벡터의 제곱 오차 합 평균) |
-| AUC | 클래스별 one-vs-rest, 프레임 블록 bootstrap CI |
-| VLM 호출 | ② = 후보 수, ③ = 0, ④ = 넘긴 수 |
-| 지연 | 박스당 판정 시간 중앙값. ④는 경로별로도 |
-| 프레임 시간 | 실시간 가정: DINO + 그 프레임의 판정(Jev 요청 1회, VLM 박스 합) ms, 평균·중앙값, fps |
-| 단계 시간 | `timing.json`: detect_load, detect, jev, vlm_load, vlm, threshold, evaluate (초) |
-| 비용 | Jev 토큰 × `cost.jev_usd_per_1m_tokens`, VLM GPU-초 |
+| 정확도 | 박스 단위 pred = y_box 비율 (ambiguous 제외). pred ∈ 6종 ∪ {background} |
+| macro F1 | 7개 클래스 F1 평균 (정확도 다음에 보고) |
+| Precision / Recall | 클래스별 one-vs-rest |
+| detection recall | GT 물체 중, 최종적으로 올바른 클래스로 남은 박스와 맞는 비율 (놓친 GT 포함 분모) |
+| ECE / Brier | track 단위, Jev p와 y_track |
+| AUROC | track 단위, y_track 기준 |
+| VLM 호출 | ③ = track 수, ⑤ = 넘긴 track 수 |
+| 시간 | `run.yaml` timing: yolo_track, jev, vlm(로드 제외), evaluate. ⑤ 시간 = Jev + 넘긴 track의 VLM 시간 |
+| 비용 | Jev 토큰 × `cost.jev_usd_per_1m_tokens` (단가 미확인 시 토큰만) |
 
-- 지표 순서는 항상 정확도 → macro F1 → Precision → Recall → ECE → VLM 호출 → 지연 → 비용.
-- 각주 1 (recall 상한): DINO 후보 recall 상한 = x%. 어느 시스템도 이를 넘을 수 없다.
-- 각주 2 (독립성): 박스 n, 프레임 n, 클립 n을 표기한다. 연속 프레임은 독립이 아니다.
-- 프레임 블록 bootstrap: 클립 안에서 연속 10프레임 블록을 단위로 2,000회 재표본.
+- 표의 열 순서: 정확도 → macro F1 → Precision → Recall → ECE → VLM 호출 → 지연 → 총 시간 → 비용.
+- 모든 표에 n_box, n_track, n_frame, n_video를 쓴다.
 
-## 7. 공정성 규칙
+### 6.3 신뢰구간
+- 판정이 track 단위라서 bootstrap 단위도 **track**이다. 각 track(그 박스 전체)과, 영상별 untracked 박스 묶음을 하나의 cluster로 보고 1,000회 재표본한다.
+- AUROC CI도 track 재표본으로 구한다.
 
-1. `t`와 `τ`는 **dev에서만** 정하고 `thresholds.yaml`에 고정한다 (`fit_split: dev`, commit 기록). test는 이 파일만 읽고, `fit_split ≠ dev`면 실행을 거부한다.
-   - `τ`: dev 자동 처리분 오류율 ≤ `gate.max_auto_error`(0.05)인 가장 작은 τ.
-2. 네 시스템 모두 같은 `candidates.jsonl`을 쓴다.
-3. VLM과 Jev는 같은 질문 문장과 같은 클래스 설명을 쓴다.
-4. 표에 n_box, n_frame, n_clip을 함께 쓴다.
-5. config 변경 의도 질문은 `/jev-loop` ⓪이 묻는다.
+## 7. run 폴더 (`runs/<YYMMDD>_<이름>/`)
 
-## 8. 개발 검증 루프 (`/jev-loop`)
+```text
+runs/261015_dev/
+├── README.md          결과 표, n 흐름, 시간·비용, 그림 설명
+├── run.yaml           config + git + 환경 + 임계값 + 단계별 시간 + 사용량
+├── data/              (심볼릭 링크) images → 원본 이미지, annotations → AAU CSV 폴더, video_split.yaml
+├── yolo/
+│   ├── input/         weights.pt (링크), tracker.yaml (링크), videos.txt
+│   └── output/        detections.jsonl (박스: video, frame, box, class, conf, track_id)
+│                      tracks.jsonl (track: 박스 목록, 투표, 다수결 클래스, 요약 통계)
+├── jev/
+│   ├── input/         requests.jsonl (보낸 요청 본문 그대로, 키 없음)
+│   └── output/        responses.jsonl (원본 응답 + 지연), decisions.jsonl (track별 p, class_fix)
+├── vlm/
+│   ├── input/         prompts.jsonl, images/<track>_frame.jpg, images/<track>_crop.jpg (실제로 넣은 이미지)
+│   └── output/        decisions.jsonl (track별 p_yes, 지연)
+└── evaluation/
+    ├── labels/        boxes.jsonl (y_box, 매칭 GT), tracks.jsonl (y_track, 유형)
+    ├── judgments.jsonl  박스마다 시스템별 pred
+    ├── tables/        metrics.json, metrics.md, errors.csv, thresholds.yaml (dev), endpoints.json (test)
+    ├── confusion/     <system>.png
+    ├── plots/         roc.png, reliability.png, tau_curve.png
+    ├── viz/           샘플 프레임: ① yolo / ② track_vote / ③ vlm_all / ⑤ gate 비교
+    └── videos/        <video>.mp4 (왼쪽 ① yolo, 오른쪽 ⑤ gate)
+```
+- 원본 데이터·가중치·설정처럼 이미 있는 것은 **심볼릭 링크**로 건다.
+- Jev 응답은 요청 본문이 완전히 같으면 이전 run의 `responses.jsonl`에서 재사용한다 (비용 절약, 재현).
+- smoke는 영상·viz를 만들지 않는다.
 
+## 8. 공정성 규칙
+1. `t`, `v`, `τ`는 **dev에서만** 정하고 `thresholds.yaml`에 고정한다 (`fit_split: dev`, run, commit 기록). test는 이 파일만 읽고, dev 영상 목록이 다르면 실행을 거부한다.
+2. 다섯 시스템 모두 같은 `detections.jsonl`·`tracks.jsonl`을 쓴다.
+3. VLM과 Jev는 같은 질문 문장과 같은 클래스 정의를 쓴다.
+4. config 변경 의도 질문은 `/jev-loop` ⓪이 묻는다.
+
+## 9. 개발 검증 루프 (`/jev-loop`)
 ```
 ⓪ 변경 의도 → ① 정적 검사 → ② 데이터 계약 → ③ smoke E2E → ④ 지표 회귀 → ⑤ 사람 육안 → ⑥ PR 기록
 ```
-세부 기준은 `.claude/skills/jev-loop/SKILL.md`. ⑤는 `viz/index.html`과 `compare` 영상으로 본다.
+`/jev-loop`은 호출할 때 한 번 도는 스킬이다 (백그라운드 프로세스 아님). 세부는 `.claude/skills/jev-loop/SKILL.md`.
 
-## 9. 레포 구조
-
+## 10. 레포 구조
 ```
 jev-gate/
-├── configs/        base.yaml (GT 박스), dino.yaml, yolo.yaml, smoke.yaml, test.yaml
-├── splits/         video_split.yaml (영상 단위 분할, 고정)
-├── scripts/        실행 진입점: run_pipeline, fit_thresholds, check_contracts, compare_metrics, config_guard,
-│                   make_plots, render_samples, make_video_split, prepare_yolo, train_yolo, yolo_progress
-├── src/
-│   ├── jevgate/
-│   │   ├── pipeline.py   S0–S8 실행 순서
-│   │   ├── core/         config.py (YAML 로드·검증), runio.py (run 폴더 구성)
-│   │   ├── data/         brackish.py (프레임·AAU 정답), splits.py (영상 분할), boxes.py (IoU·NMS), labels.py (박스 정답)
-│   │   ├── detectors/    dino.py (Grounding DINO + 캐시), yolo.py (YOLO 데이터·학습·수렴)
-│   │   ├── judges/       base, threshold(①), vlm(②), jev(③), evidence.py (Jev 증거), gate.py (④)
-│   │   ├── evaluation/   metrics.py, evaluate.py (metrics.json), contracts.py (데이터 계약)
-│   │   └── outputs/      plots.py (그림), viz.py (오버레이), report.py (README)
-│   └── tests/
+├── configs/        base.yaml (전부), smoke.yaml, test.yaml, yolo*.yaml (YOLO 학습 변형)
+├── splits/         video_split.yaml
+├── scripts/        run_pipeline · fit_thresholds · check_contracts · compare_metrics · config_guard
+│                   make_video_split · prepare_yolo · train_yolo · eval_yolo · yolo_progress · track_yolo · diagnose_yolo_class
+├── src/jevgate/
+│   ├── pipeline.py   단계 실행 순서
+│   ├── core/         config.py, runio.py (run 폴더·링크)
+│   ├── data/         brackish.py (프레임·AAU), splits.py, boxes.py (IoU), labels.py (y_box, y_track)
+│   ├── detectors/    yolo.py (데이터·학습·평가), track.py (YOLO + ByteTrack, track 요약)
+│   ├── judges/       jev.py, vlm.py, gate.py
+│   ├── evaluation/   metrics.py, evaluate.py, contracts.py
+│   └── outputs/      plots.py, viz.py, report.py
+├── src/tests/
 ├── docs/           PLAN.md, DATA.md
-├── train/          YOLO 학습 결과 (gitignore)
-└── data/ runs/ .env  (gitignore)
+└── train/ data/ runs/ .env   (gitignore)
 ```
 
-## 10. git 운영
+## 11. git 운영
+- `main`: 검증 루프 통과 코드. `feat/<기능>`: 코드 작업. `exp/<YYMMDD>-<이름>`: config만 바꾸는 실험.
 
-- `main`: 검증 루프를 통과한 코드만.
-- `feat/<단계>`: 코드 작업. `exp/<YYMMDD>-<실험 이름>`: config만 바꾸는 실험.
-- 원격은 팀 공유 시점에 만든다.
-
-## 11. 마일스톤
-
+## 12. 마일스톤
 | M | 내용 | 완료 기준 |
 |---|---|---|
-| M0 | config(7클래스·새 클립), runio, boxes, data, label, evidence, contracts, metrics, 테스트 | ruff + pytest 통과 |
-| M1 | S1~S3 dev 실행 + `label_summary`, `dino_vs_gt_confusion`, `viz/frames/{gt,dino}` | 계약 통과, recall 상한 산출, 사람이 DINO overlay 확인 |
-| M2 | S4~S5 ①·③ + smoke E2E | smoke가 예산 안에서 끝까지 실행 |
-| M3 | S5 ② VLM (선택지 logit) | dev 전 후보 판정 |
-| M4 | S6~S7 + plots, dev에서 t·τ 고정 → test 1회 | 결과 표·그림·`endpoints.json` |
-| M5 | S8 영상·index.html, 결과 카드 PPT | ⑤ 육안 확인 |
-| M6 (선택) | autoresearch식 증거 형식 탐색 (별도 탐색 클립, test 차단, 비용 상한) | M4 이후에만 |
+| M0 | DINO·GT 경로 제거, 새 config, track 요약, 라벨, Jev/VLM 질문, gate, 평가, 테스트 | ruff + pytest 통과 |
+| M1 | smoke (dev 2개 영상) | 끝까지 실행, 계약 통과, 예산 안 |
+| M2 | dev 전체 → `t`·`v`·`τ` 고정 | `thresholds.yaml` 커밋 |
+| M3 | test 1회 | 결과 표·그림·`endpoints.json` |
+| M4 | 영상, viz, 결과 카드 | ⑤ 육안 확인 |
+| M5 (탐색) | detector 신뢰도 표 넣은 Jev, `class_fix` 분석 | M3 이후에만 |
 
-## 12. 열린 이슈
-
-- Jev 토큰 단가와 rate limit 미확인 → smoke에서 사용량을 재고 콘솔에서 확인.
-- DINO `box_threshold`(후보를 넉넉히 내도록 낮게)는 dev에서만 정한다.
-- shrimp(dev 77·test 71)와 jellyfish(dev 57·test 87)는 박스가 적어 클래스별 CI가 넓다.
-- fish vs small_fish는 종이 아니라 크기·무리 기준이라, 텍스트만 보는 Jev가 구분할 근거가 약하다 → 병합 민감도 분석.
-- AAU 육안 검수는 254장뿐이다. 흐릿한 실루엣이 background로 채점될 수 있다 → ⑤와 `errors.csv`에서 표시.
-
-## 13. 산출물 → 발표 매핑
-
-| 발표 요소 | 출처 |
-|---|---|
-| 결과 표 | test `metrics.md` |
-| 그림 A·C 형태 (ROC, 2×2) | `plots/roc_*`, `plots/ovr_2x2_*` |
-| calibration 슬라이드 | `plots/reliability_jev.png`, `tau_curve.png` |
-| Before → After 영상 | `viz/videos/<clip>_dino.mp4` → `<clip>_gate.mp4` |
-| 오류 사례 | `errors.csv`, `viz/crops/errors/` |
+## 13. 열린 이슈
+- Jev 토큰 단가 미확인 → 토큰 수만 보고.
+- test track 수가 수백 개 수준이라 CI가 넓을 수 있다 (conf 0.1로 track 수를 늘렸다).
+- shrimp·jellyfish는 test 박스가 68·97개로 적다.
+- ByteTrack ID switch(물고기 떼)로 한 track에 두 물체가 섞이면 track 판정이 일부 박스에서 틀린다 → 오류 분석에서 따로 센다.
+- Jev는 YOLO가 놓친 물체를 되살리지 못한다. 고칠 수 있는 것은 거짓 track과 오분류뿐이다.
 
 ## 14. 변경 기록
-
-- v1 (2026-10-13): 이진 판정, 클립 3개, endpoint 사전 등록.
-- v2 (2026-10-14, 결과 보기 전): 7-way 클래스 판정 (6종 + background), VLM은 선택지 logit, Jev는 `choice`, 클립 8개로 재선정 (dev·test 각 6종 포함), 단계별 산출물 정의.
-- v4 (2026-10-14): GT 박스 평가로 전환 (DINO 후보 결과 `261014_dev/test`는 삭제, primary 실패: Δacc +0.036 [0.027, 0.047], 호출 비율 0.818). run 폴더를 README·run.yaml·frames·boxes·judgments·metrics·errors·cache·figures·samples로 정리, 그림 4장(fig1 trade-off, fig2 per-class, fig3 Jev self-knowledge, fig4 calibration).
-- v3 (2026-10-14, test 결과 보기 전): 원본 train+valid/test 분할로 전체 데이터 사용, Jev need_vlm 5단계 질문 추가, primary = need_vlm 게이트(④a·④c는 secondary), 시간 기록 보강.
-  dev 점검(`261014_smoke`, `261014_smoke60`)으로 정한 것: DINO box_threshold 0.15 → 0.25 (동물 박스 20개 중 19개 유지, background 후보 약 75% 감소), 공통 맥락 문장 보강, VLM에도 DINO 제안 라벨·score 제공, Jev 클래스 정의를 state에 한 번만 기재(입력 토큰 −22%).
-  관찰: dev 60프레임에서 VLM이 동물 박스 대부분을 background로 판정(정확도 0.646). background logit 보정은 +3%p뿐이라 넣지 않았다.
+- v1 (2026-10-13): Grounding DINO 후보 박스 이진 판정(real/fake), 클립 3개, endpoint 사전 등록.
+- v2–v3 (2026-10-14): 7-way 클래스 판정, 원본 분할 전체 사용, Jev `need_vlm` 질문.
+- v4 (2026-10-14): GT 박스 6-way 판정. test primary 실패 (호출 비율 0.999). 결과 폴더는 2026-10-15 삭제.
+- **v6 (2026-10-15, 결과 보기 전)**: DINO·GT 방식 폐기. YOLO12s(영상 단위 분할) + ByteTrack track을 판정 단위로, Jev `track_ok` Noul 게이트, VLM은 track 대표 프레임 Yes/No(`v`는 dev에서 결정), dev = val 영상 13개 / test = test 영상 13개, run 폴더를 yolo·jev·vlm·evaluation으로 재구성.

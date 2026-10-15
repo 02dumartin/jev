@@ -34,12 +34,20 @@ def test_ece_top_and_brier():
     assert M.brier_multi(["fish"], [{"fish": 0.0, "crab": 1.0, "background": 0.0}], C) == 2.0
 
 
-def test_block_bootstrap_identical_systems_has_zero_delta():
-    frames = [("c", i) for i in range(30) for _ in range(2)]
-    boot = M.BlockBootstrap(frames, 5, 200, 0)
-    c = np.ones(len(frames))
-    assert boot.ci(lambda idx: float(c[idx].mean() - c[idx].mean())) == (0.0, 0.0)
-    assert len(M.frame_blocks([("a", 0), ("a", 1), ("b", 0)], 10)) == 2  # blocks stay within a clip
+def test_cluster_bootstrap_resamples_whole_clusters():
+    boot = M.ClusterBootstrap(["a", "a", "b", "c"], 200, 0)
+    assert len(boot.members) == 3
+    lo, hi = boot.ci(lambda idx: 0.0)
+    assert lo == hi == 0.0
+    # a statistic that is constant within clusters never sees a split cluster
+    vals = np.asarray([1, 1, 0, 0])
+    lo, hi = boot.ci(lambda idx: float(vals[idx].mean()))
+    assert 0.0 <= lo <= hi <= 1.0
+
+
+def test_brier_binary():
+    assert M.brier_binary([1, 0], [1.0, 0.0]) == 0.0
+    assert M.brier_binary([1, 0], [0.0, 1.0]) == 1.0
 
 
 def test_endpoints_stop_at_first_failure():

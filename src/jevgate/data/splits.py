@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from jevgate.data.brackish import BrackishGT, parse_frame_name, split_files
+from jevgate.data.brackish import BrackishGT, listed_files, parse_frame_name
 
 SPLITS = ("train", "val", "test")
 
@@ -25,7 +25,7 @@ def video_categories(cfg: dict) -> dict[str, str]:
 
 def listed_frames(cfg: dict) -> list[str]:
     """Every frame in the original split lists (frames outside them have unknown GT and are dropped)."""
-    return sorted({f for s in ("dev", "test") for f in split_files(cfg, s)}, key=parse_frame_name)
+    return listed_files(cfg)
 
 
 def video_stats(cfg: dict, gt: BrackishGT) -> dict[str, dict]:
@@ -95,3 +95,10 @@ def write_split(path: Path, assign: dict[str, str], stats: dict, classes: list[s
 def load_split(path: Path) -> dict[str, list[str]]:
     """{split: [video, ...]} from a committed split file."""
     return yaml.safe_load(Path(path).read_text())["videos"]
+
+
+def run_videos(cfg: dict, repo: Path) -> list[str]:
+    """Videos of the run split (dev -> the split's val videos, test -> its test videos), smoke-truncated."""
+    which = cfg["video_split"]["run_split_to_video_split"][cfg["run"]["split"]]
+    videos = load_split(repo / cfg["video_split"]["file"])[which]
+    return videos[: cfg["run"]["max_videos"]] if cfg["run"].get("max_videos") else videos

@@ -1,13 +1,18 @@
 import pytest
 from conftest import REPO
 
-from jevgate.core.config import ConfigError, deep_merge, load_config, parse_overrides
+from jevgate.core.config import ConfigError, deep_merge, load_config, output_classes, parse_overrides
 
 
 def test_smoke_inherits_base():
     cfg = load_config(REPO / "configs" / "smoke.yaml")
-    assert cfg["run"]["name"] == "smoke" and cfg["run"]["max_frames"] == 12
-    assert list(cfg["classes"])[-1] == "background" and len(cfg["classes"]) == 7
+    assert cfg["run"]["name"] == "smoke" and cfg["run"]["max_videos"] == 2
+    assert cfg["track"]["weights"] == "train/yolo12s_video/weights/best.pt"
+
+
+def test_yolo_training_configs_still_load():
+    for name in ("yolo.yaml", "yolo_orig.yaml", "yolo_video_paper416.yaml", "yolo_orig_paper416.yaml"):
+        assert load_config(REPO / "configs" / name)["yolo"]["name"].startswith("yolo12s")
 
 
 def test_overrides_and_merge():
@@ -23,18 +28,10 @@ def test_test_split_requires_dev_thresholds():
 
 def test_rejects_bad_settings():
     base = REPO / "configs" / "base.yaml"
-    for bad in (["splits.test=[valid.txt]"], ["label.background_iou=0.7"], ["run.systems=[threshold, gate]"],
-                ["gate.primary=jev"], ["detector.phrase_to_class={fish: eel}"]):
+    for bad in (["label.background_iou=0.7"], ["run.systems=[yolo, gate]"], ["prompts.question=Is it real?"]):
         with pytest.raises(ConfigError):
             load_config(base, bad)
 
 
-def test_gt_source_drops_background_and_detector_baseline():
-    from jevgate.core.config import class_names
-
-    cfg = load_config(REPO / "configs" / "base.yaml")
-    assert cfg["candidates"]["source"] == "gt" and "background" not in class_names(cfg)
-    dino = load_config(REPO / "configs" / "dino.yaml")
-    assert class_names(dino)[-1] == "background" and "threshold" in dino["run"]["systems"]
-    with pytest.raises(ConfigError):
-        load_config(REPO / "configs" / "base.yaml", ["run.systems=[threshold, vlm, jev]"])
+def test_output_classes_end_with_background(cfg):
+    assert output_classes(cfg)[-1] == "background" and len(output_classes(cfg)) == 7

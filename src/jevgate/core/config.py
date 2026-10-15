@@ -8,22 +8,18 @@ from pathlib import Path
 import yaml
 
 REQUIRED_KEYS = [
-    "run.name", "run.out_root", "run.split", "run.systems", "run.cache_root",
-    "data.root", "data.images_dir", "data.aau_csvs", "data.frame_wh",
-    "splits.dev", "splits.test", "classes", "candidates.source",
-    "detector.model", "detector.prompt", "detector.phrase_to_class", "detector.box_threshold", "detector.nms_iou",
-    "label.match_iou", "label.background_iou",
-    "evidence.history_frames", "evidence.match_iou",
-    "prompts.context", "prompts.question", "prompts.need_vlm_question", "prompts.need_vlm_levels",
-    "jev.model", "jev.endpoint", "jev.batching",
-    "vlm.model",
-    "gate.primary", "gate.max_auto_error", "gate.need_vlm_grid_step", "gate.conf_grid_step",
-    "metrics.ece_bins", "metrics.bootstrap", "metrics.min_class_n",
-    "endpoints.sequential",
+    "run.name", "run.out_root", "run.split", "run.systems",
+    "data.root", "data.images_dir", "data.annotations_dir", "data.aau_csvs", "data.split_lists", "data.frame_wh",
+    "video_split.file", "video_split.run_split_to_video_split", "classes", "not_an_animal",
+    "track.weights", "track.tracker", "track.conf", "track.iou", "track.imgsz", "track.device",
+    "label.match_iou", "label.background_iou", "label.track_ok_share",
+    "prompts.context", "prompts.question", "prompts.true_means", "prompts.false_means", "prompts.class_fix_question",
+    "jev.model", "jev.endpoint", "jev.max_tracks_per_request",
+    "vlm.model", "gate.max_auto_error", "gate.tau_grid_step",
+    "metrics.ece_bins", "metrics.bootstrap", "endpoints.primary_pair", "endpoints.sequential",
     "budget.max_jev_requests", "budget.max_jev_tokens", "budget.max_vlm_calls",
 ]
-KNOWN_SYSTEMS = {"threshold", "vlm", "jev", "gate", "gate_conf", "gate_either"}
-GATE_SYSTEMS = {"gate", "gate_conf", "gate_either"}
+KNOWN_SYSTEMS = ("yolo", "track_vote", "vlm_all", "jev", "gate")
 BACKGROUND = "background"
 
 
@@ -93,40 +89,30 @@ def validate(cfg: dict) -> None:
     if cfg["run"]["split"] not in ("dev", "test"):
         raise ConfigError("run.split must be 'dev' or 'test'")
     systems = set(cfg["run"]["systems"])
-    if systems - KNOWN_SYSTEMS:
-        raise ConfigError(f"unknown systems: {sorted(systems - KNOWN_SYSTEMS)}")
-    if systems & GATE_SYSTEMS and not {"vlm", "jev"} <= systems:
-        raise ConfigError("gate systems need both 'vlm' and 'jev'")
-    if cfg["gate"]["primary"] not in GATE_SYSTEMS:
-        raise ConfigError(f"gate.primary must be one of {sorted(GATE_SYSTEMS)}")
-    if BACKGROUND not in cfg["classes"]:
-        raise ConfigError("classes must include 'background'")
-    if cfg["candidates"]["source"] not in ("dino", "gt"):
-        raise ConfigError("candidates.source must be 'dino' or 'gt'")
-    if cfg["candidates"]["source"] == "gt" and "threshold" in systems:
-        raise ConfigError("the detector baseline needs DINO scores; remove 'threshold' when candidates.source=gt")
-    unmapped = set(cfg["detector"]["phrase_to_class"].values()) - set(cfg["classes"])
-    if unmapped:
-        raise ConfigError(f"detector.phrase_to_class maps to unknown classes: {sorted(unmapped)}")
+    if systems - set(KNOWN_SYSTEMS):
+        raise ConfigError(f"unknown systems: {sorted(systems - set(KNOWN_SYSTEMS))}")
+    if "gate" in systems and not {"vlm_all", "jev"} <= systems:
+        raise ConfigError("the gate system needs both 'vlm_all' and 'jev'")
+    if not set(cfg["endpoints"]["primary_pair"]) <= systems:
+        raise ConfigError("endpoints.primary_pair must be run systems")
+    if BACKGROUND in cfg["classes"]:
+        raise ConfigError("classes are the six animals; background is the result of rejecting a track")
     if not cfg["label"]["background_iou"] <= cfg["label"]["match_iou"]:
         raise ConfigError("label.background_iou must be <= label.match_iou")
-    if cfg["jev"]["batching"] not in ("per_frame", "per_box"):
-        raise ConfigError("jev.batching must be per_frame or per_box")
-    overlap = set(cfg["splits"]["dev"]) & set(cfg["splits"]["test"])
-    if overlap:
-        raise ConfigError(f"split lists appear in both dev and test: {sorted(overlap)}")
+    if "{cls}" not in cfg["prompts"]["question"]:
+        raise ConfigError("prompts.question must contain {cls}")
     if cfg["run"]["split"] == "test" and not cfg.get("thresholds_file"):
         raise ConfigError("test runs need thresholds_file fitted on dev")
 
 
 def class_names(cfg: dict) -> list[str]:
-    """Ordered judgment classes: six animals, then background (dropped for GT boxes, which are all animals)."""
-    return [c for c in cfg["classes"] if not (c == BACKGROUND and cfg["candidates"]["source"] == "gt")]
+    """The six animal classes in config order (YOLO class ids 0-5)."""
+    return list(cfg["classes"])
 
 
-def class_defs(cfg: dict) -> dict[str, str]:
-    """Descriptions of the judgment classes, shared by the VLM options and Jev's class definitions."""
-    return {c: cfg["classes"][c] for c in class_names(cfg)}
+def output_classes(cfg: dict) -> list[str]:
+    """Box-level outcome classes: six animals, then background (a rejected or untracked box)."""
+    return class_names(cfg) + [BACKGROUND]
 
 
 def load_config(path: str | Path, overrides: list[str] | None = None) -> dict:

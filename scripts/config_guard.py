@@ -13,13 +13,14 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 WATCH = [
-    (("thresholds_file", "gate.max_auto_error", "gate.tau", "baseline.t"),
-     "Was this threshold change made after looking at test clips? If so, revert and refit on dev."),
-    (("clips",), "Was this clip split fixed before seeing any result? If not, revert it."),
-    (("vlm.model", "vlm.dtype"), "The VLM changed: system ② must be re-run as the new baseline. Proceed?"),
-    (("jev.model",), "The Jev model changed: re-run ③ and ④?"),
-    (("prompts.question", "prompts.context"), "The prompt changed: do VLM and Jev still share the same text?"),
-    (("detector",), "The detector changed: candidates differ, so all four systems will be re-run."),
+    (("thresholds_file", "gate.max_auto_error", "gate.tau_grid_step"),
+     "Was this threshold change made after looking at test videos? If so, revert and refit on dev."),
+    (("video_split", "run.split"), "Was the video split fixed before seeing any result? If not, revert it."),
+    (("vlm",), "The VLM input changed: ③ must be re-run as the new baseline. Proceed?"),
+    (("jev.model", "jev.include_detector_reliability", "jev.max_tracks_per_request"),
+     "Jev input changed: re-run ④ and ⑤?"),
+    (("prompts", "classes", "not_an_animal"), "The prompt changed: do VLM and Jev still share the same text?"),
+    (("track",), "The detector/tracker changed: tracks differ, so every system will be re-run."),
     (("label",), "The labelling rule changed: every metric moves; explain why in the PR."),
 ]
 

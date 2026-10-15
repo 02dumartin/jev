@@ -1,10 +1,9 @@
-"""③ Jev (TypeSafe API): two questions per candidate box over text evidence.
+"""④ Jev (TypeSafe API) on track summaries (PLAN.md v6 §4). Jev accepts text only.
 
-- `class`: choice over the judgment classes -> class probabilities.
-- `need_vlm`: 5-level score "how much would looking at the image be needed" -> level 1-5.
-
-Jev accepts text only, so each box is described by its detector label/score, geometry and causal
-track features (evidence.py). With batching='per_frame' one request carries every box of a frame.
+Per track two questions over a shared state (the tracks of one video, in chunks):
+- `<uid>|ok`  Noul   "Is this track a real <majority class>?"  -> p_ok (the gate uses only this)
+- `<uid>|fix` Choice six classes + not_an_animal                -> exploratory correction
+Raw requests and responses are kept; a response is reused only for an identical request body.
 """
 
 import json
@@ -17,92 +16,95 @@ from pathlib import Path
 
 import httpx
 
-from jevgate.core.config import class_defs, class_names
-from jevgate.judges.base import Budget, Judge, decision
+from jevgate.core.config import class_names
+from jevgate.judges.base import Budget
 
 RETRY_STATUS = {408, 429, 499, 529}  # plus every 5xx
+NOT_ANIMAL = "not_an_animal"
 
 
 class JevError(RuntimeError):
     """Jev returned an error or an answer that fails validation; nothing is guessed."""
 
 
-def box_view(ev: dict) -> dict:
-    """The part of an evidence row that Jev sees (no ids, no frame indices)."""
-    view = {"geometry": ev["geometry"], "track": ev["track"]}
-    return {"detector": ev["detector"], **view} if "detector" in ev else view
+def validate_noul(answer) -> float:
+    """The Noul probability, or JevError if it is missing or outside [0, 1]."""
+    try:
+        value = answer["noul"]
+    except (KeyError, TypeError):
+        raise JevError(f"missing noul in answer: {answer!r}") from None
+    if type(value) not in (int, float) or not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise JevError(f"noul outside [0, 1]: {value!r}")
+    return float(value)
 
 
-def validate_choice(answer: dict, classes: list[str]) -> dict[str, float]:
-    """Class probabilities from a choice answer, or JevError if keys/values/sum are wrong."""
+def validate_choice(answer, options: list[str]) -> dict[str, float]:
+    """Choice probabilities over `options` (renormalised), or JevError if keys/values/sum are wrong."""
     try:
         probs = answer["probabilities"]
     except (KeyError, TypeError):
         raise JevError(f"missing probabilities in choice answer: {answer!r}") from None
-    if set(probs) != set(classes):
-        raise JevError(f"choice keys {sorted(probs)} != classes")
+    if set(probs) != set(options):
+        raise JevError(f"choice keys {sorted(probs)} != {sorted(options)}")
     vals = list(probs.values())
     if not all(type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1 for v in vals):
         raise JevError(f"choice probability outside [0, 1]: {probs}")
     total = sum(vals)
     if abs(total - 1) > 0.02:
         raise JevError(f"choice probabilities sum to {total}")
-    return {c: float(probs[c]) / total for c in classes}
+    return {c: float(probs[c]) / total for c in options}
 
 
-def validate_score(answer: dict, n_levels: int) -> dict:
-    """need_vlm level on a 1..n scale (Jev reports levels 0..n-1) plus its level probabilities."""
-    try:
-        score, probs = answer["score"], answer["probabilities"]
-    except (KeyError, TypeError):
-        raise JevError(f"missing score in answer: {answer!r}") from None
-    if type(score) not in (int, float) or not 0 <= score <= n_levels - 1:
-        raise JevError(f"score outside [0, {n_levels - 1}]: {score!r}")
-    return {"need_vlm": round(float(score) + 1, 4),
-            "need_vlm_probs": {str(int(k) + 1): float(v) for k, v in probs.items()},
-            "need_vlm_confidence": answer.get("confidence")}
+def detector_reliability(cfg: dict, repo: Path) -> dict | None:
+    """YOLO's per-class precision/recall on the dev (val) videos, when enabled in the config."""
+    if not cfg["jev"].get("include_detector_reliability"):
+        return None
+    evals = json.loads((repo / cfg["jev"]["detector_reliability_file"]).read_text())
+    val = next(e for e in evals if e["split"] == "val")
+    return {c: {"precision": round(v["precision"], 2), "recall": round(v["recall"], 2)}
+            for c, v in val["per_class"].items()}
 
 
-def question_keys(cand_id: str) -> tuple[str, str]:
-    return f"{cand_id}|class", f"{cand_id}|need_vlm"
+def question_keys(uid: str) -> tuple[str, str]:
+    return f"{uid}|ok", f"{uid}|fix"
 
 
-def build_request(cfg: dict, boxes: list[tuple[str, dict]]) -> dict:
-    """Request body for a group of (cand_id, evidence) pairs that share one state.
-
-    Class definitions and the need_vlm scale are written once in the state; each box gets two
-    questions that refer to them (fewer tokens than repeating them in every question).
-    """
+def build_request(cfg: dict, tracks: list[dict], reliability: dict | None = None) -> dict:
+    """Request body for tracks of one video. Track ids and video names are not sent (T1, T2, ... only)."""
     p = cfg["prompts"]
-    names = {cid: f"B{k + 1}" for k, (cid, _) in enumerate(boxes)}
-    levels = list(p["need_vlm_levels"])
-    state = {"context": p["context"], "class_definitions": class_defs(cfg), "need_vlm_scale": levels,
-             "candidates_in_frame": len(boxes), "candidate_boxes": {names[cid]: box_view(ev) for cid, ev in boxes}}
+    names = {t["track_uid"]: f"T{k + 1}" for k, t in enumerate(tracks)}
+    state = {"context": p["context"],
+             "class_definitions": {**cfg["classes"], NOT_ANIMAL: cfg["not_an_animal"]},
+             "tracks": {names[t["track_uid"]]: t["evidence"] for t in tracks}}
+    if reliability is not None:
+        state["detector_reliability_on_other_videos"] = reliability
     questions = {}
-    for cid, _ in boxes:
-        target = f"Judge only candidate box `{names[cid]}` from the state."
-        q_class, q_need = question_keys(cid)
-        questions[q_class] = {"type": "choice",
-                              "instructions": {"question": p["question"], "target": target,
-                                               "options": "defined in `class_definitions`"},
-                              "criteria": dict.fromkeys(class_names(cfg))}
-        questions[q_need] = {"type": "score",
-                             "instructions": {"question": p["need_vlm_question"], "target": target,
-                                              "levels": "defined in `need_vlm_scale`"},
-                             "criteria": [str(k + 1) for k in range(len(levels))]}
+    for t in tracks:
+        cls, target = t["majority_class"], f"Judge only track `{names[t['track_uid']]}` from the state."
+        q_ok, q_fix = question_keys(t["track_uid"])
+        questions[q_ok] = {"type": "noul",
+                           "instructions": {"question": p["question"].format(cls=cls), "target": target},
+                           "criteria": {"true": p["true_means"].format(cls=cls), "false": p["false_means"]}}
+        questions[q_fix] = {"type": "choice",
+                            "instructions": {"question": p["class_fix_question"], "target": target,
+                                             "options": "defined in `class_definitions`"},
+                            "criteria": dict.fromkeys([*class_names(cfg), NOT_ANIMAL])}
     return {"model": cfg["jev"]["model"], "state": state, "questions": questions}
 
 
+def body_key(body: dict) -> str:
+    """Canonical request text: a stored response is reused only for an identical request."""
+    return json.dumps(body, sort_keys=True, ensure_ascii=False)
+
+
 class JevClient:
-    """Thin HTTP client with retry on rate limits/overload. The API key is never logged."""
+    """HTTP client with retry on rate limits/overload/5xx. The API key is never logged."""
 
     def __init__(self, cfg: dict, budget: Budget):
         key = os.environ.get(cfg["jev"]["api_key_env"])
         if not key:
             raise JevError(f"{cfg['jev']['api_key_env']} is not set (.env)")
-        self.endpoint = cfg["jev"]["endpoint"]
-        self.max_retries = cfg["jev"]["max_retries"]
-        self.budget = budget
+        self.endpoint, self.max_retries, self.budget = cfg["jev"]["endpoint"], cfg["jev"]["max_retries"], budget
         self.client = httpx.Client(http2=True, timeout=cfg["jev"]["timeout_s"],
                                    headers={"Authorization": f"Bearer {key}"})
 
@@ -132,77 +134,63 @@ class JevClient:
         raise JevError("retries exhausted")
 
 
-class JevJudge(Judge):
-    name = "jev"
+class JevJudge:
+    """Asks Jev about every track; writes requests/responses as they happen."""
 
-    def __init__(self, cfg: dict, budget: Budget, log=None, checkpoint: Path | None = None,
-                 resume: list[Path] | None = None):
-        """checkpoint: raw responses are appended here as they arrive (a failure loses nothing).
-        resume: earlier checkpoint files; a stored response is reused only if its request body is identical."""
-        self.cfg = cfg
-        self.classes = class_names(cfg)
-        self.n_levels = len(cfg["prompts"]["need_vlm_levels"])
+    def __init__(self, cfg: dict, repo: Path, budget: Budget, requests_file: Path, responses_file: Path,
+                 resume: list[Path], log=None):
+        self.cfg, self.log = cfg, log
+        self.options = [*class_names(cfg), NOT_ANIMAL]
+        self.reliability = detector_reliability(cfg, repo)
         self.client = JevClient(cfg, budget)
-        self.log = log
-        self.checkpoint = checkpoint
+        self.requests_file, self.responses_file = requests_file, responses_file
         self.lock = threading.Lock()
         self.stored: dict[str, dict] = {}
-        for path in resume or []:
-            if Path(path).exists():
-                for line in Path(path).open():
-                    if line.strip():
-                        rec = json.loads(line)
-                        self.stored[_body_key(rec["request"])] = rec
+        for path in resume:
+            for line in Path(path).open():
+                if line.strip():
+                    rec = json.loads(line)
+                    self.stored[body_key(rec["request"])] = rec
 
-    def _groups(self, candidates, evidence) -> list[list[tuple[str, dict]]]:
-        ev = {e["cand_id"]: e for e in evidence}
-        if self.cfg["jev"]["batching"] == "per_box":
-            return [[(c["cand_id"], ev[c["cand_id"]])] for c in candidates]
-        groups: dict[tuple, list] = {}
-        for c in candidates:
-            groups.setdefault((c["clip"], c["frame_idx"]), []).append((c["cand_id"], ev[c["cand_id"]]))
-        return list(groups.values())
+    def chunks(self, tracks: list[dict]) -> list[list[dict]]:
+        """Tracks of the same video, max_tracks_per_request at a time."""
+        n, by_video = self.cfg["jev"]["max_tracks_per_request"], {}
+        for t in tracks:
+            by_video.setdefault(t["video"], []).append(t)
+        return [ts[i:i + n] for ts in by_video.values() for i in range(0, len(ts), n)]
 
-    def _run_group(self, group) -> tuple[list[dict], dict]:
-        body = build_request(self.cfg, group)
-        stored = self.stored.get(_body_key(body))
-        if stored is not None:
-            data, latency = stored["response"], stored["latency_ms"]
-        else:
-            data, latency = self.client.post(body)
-        usage = data.get("usage", {})
-        answers = data.get("answers", {})
-        n = len(group)
+    def _run_chunk(self, chunk: list[dict]) -> list[dict]:
+        body = build_request(self.cfg, chunk, self.reliability)
+        stored = self.stored.get(body_key(body))
+        data, latency = (stored["response"], stored["latency_ms"]) if stored else self.client.post(body)
+        answers, usage, n = data.get("answers", {}), data.get("usage", {}), len(chunk)
         rows = []
-        for cid, _ in group:
-            q_class, q_need = question_keys(cid)
-            probs = validate_choice(answers.get(q_class), self.classes)
-            need = validate_score(answers.get(q_need), self.n_levels)
-            rows.append(decision(
-                cid, probs, latency / n,
-                tokens_in=usage.get("input_tokens", 0) / n, tokens_out=usage.get("output_tokens", 0) / n,
-                request_latency_ms=round(latency, 1), request_size=n, jev_model=data.get("model"),
-                jev_choice_confidence=answers[q_class].get("confidence"), **need,
-            ))
-        raw = {"cand_ids": [cid for cid, _ in group], "request": body, "response": data,
-               "latency_ms": round(latency, 1), "reused": stored is not None}
-        if self.checkpoint is not None:
-            with self.lock, self.checkpoint.open("a") as f:
-                f.write(json.dumps(raw, ensure_ascii=False) + "\n")
-        return rows, raw
+        for t in chunk:
+            q_ok, q_fix = question_keys(t["track_uid"])
+            fix = validate_choice(answers.get(q_fix), self.options)
+            rows.append({"track_uid": t["track_uid"], "p_ok": validate_noul(answers.get(q_ok)),
+                         "fix_probs": {k: round(v, 5) for k, v in fix.items()}, "fix_choice": max(fix, key=fix.get),
+                         "latency_ms": round(latency / n, 3), "request_latency_ms": round(latency, 1),
+                         "request_size": n, "tokens_in": usage.get("input_tokens", 0) / n,
+                         "tokens_out": usage.get("output_tokens", 0) / n, "jev_model": data.get("model"),
+                         "reused": stored is not None})
+        uids = [t["track_uid"] for t in chunk]
+        with self.lock:
+            with self.requests_file.open("a") as f:
+                f.write(json.dumps({"track_uids": uids, "request": body}, ensure_ascii=False) + "\n")
+            with self.responses_file.open("a") as f:
+                f.write(json.dumps({"track_uids": uids, "request": body, "response": data,
+                                    "latency_ms": round(latency, 1), "reused": stored is not None},
+                                   ensure_ascii=False) + "\n")
+        return rows
 
-    def judge(self, frames, candidates, evidence):
-        groups = self._groups(candidates, evidence)
-        by_id, done = {}, 0
+    def judge(self, tracks: list[dict]) -> list[dict]:
+        """One decision row per track, in track order."""
+        chunks = self.chunks(tracks)
+        by_uid = {}
         with ThreadPoolExecutor(self.cfg["jev"]["max_concurrency"]) as pool:
-            for rows, _ in pool.map(self._run_group, groups):
-                by_id.update({r["cand_id"]: r for r in rows})
-                done += 1
-                if self.log and done % 1000 == 0:
-                    self.log(f"  Jev {done}/{len(groups)} requests")
-        return [by_id[c["cand_id"]] for c in candidates]
-
-
-def _body_key(body: dict) -> str:
-    """Canonical request text: a stored response is reused only for an identical request."""
-    return json.dumps(body, sort_keys=True, ensure_ascii=False)
+            for k, rows in enumerate(pool.map(self._run_chunk, chunks), 1):
+                by_uid.update({r["track_uid"]: r for r in rows})
+                if self.log and k % 50 == 0:
+                    self.log(f"  Jev {k}/{len(chunks)} requests")
+        return [by_uid[t["track_uid"]] for t in tracks]

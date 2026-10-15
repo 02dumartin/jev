@@ -1,10 +1,9 @@
-"""Run S1-S8 for one config: uv run python scripts/run_pipeline.py --config configs/smoke.yaml"""
+"""Run one experiment (PLAN.md v6): uv run python scripts/run_pipeline.py --config configs/smoke.yaml"""
 
 import argparse
 from pathlib import Path
 
 from jevgate.core.config import load_config
-from jevgate.core.runio import RunDir
 from jevgate.pipeline import Pipeline
 
 REPO = Path(__file__).resolve().parents[1]
@@ -13,23 +12,9 @@ REPO = Path(__file__).resolve().parents[1]
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", required=True)
-    ap.add_argument("--split", choices=["dev", "test"], help="shortcut for --set run.split=...")
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE", help="config overrides")
-    ap.add_argument("--reuse-from", type=Path, help="earlier run folder to copy outputs from")
-    ap.add_argument("--reuse", default="", help="comma list of judge outputs to copy: vlm,jev")
-    ap.add_argument("--resume-jev", type=Path, nargs="*", default=[],
-                    help="earlier raw/jev_responses.jsonl files; identical requests reuse the stored response")
     args = ap.parse_args()
-
-    overrides = list(args.set) + ([f"run.split={args.split}"] if args.split else [])
-    cfg = load_config(REPO / args.config, overrides)
-    reuse = {}
-    if args.reuse:
-        if not args.reuse_from:
-            ap.error("--reuse needs --reuse-from")
-        source = RunDir(args.reuse_from)
-        reuse = {what.strip(): source for what in args.reuse.split(",") if what.strip()}
-    run = Pipeline(cfg, REPO, reuse, args.resume_jev).run()
+    run = Pipeline(load_config(REPO / args.config, args.set), REPO).run()
     print(f"\nrun_id: {run.run_id}\nfolder: {run.path}")
 
 

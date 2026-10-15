@@ -1,85 +1,82 @@
-"""S3: box-level class ground truth for each DINO candidate (PLAN.md §2.2)."""
+"""Ground truth for detections (y_box) and tracks (y_track), and the GT the detector missed (PLAN.md §2.2-2.3)."""
 
-from collections import Counter
+from collections import Counter, defaultdict
 
-from jevgate.data.boxes import iou_matrix
 from jevgate.core.config import BACKGROUND
+from jevgate.data.boxes import iou_matrix
 from jevgate.data.brackish import BrackishGT
 
-AMBIGUOUS = "ambiguous"
 
-
-def iou_to_label(max_iou: float, gt_label: str | None, match_iou: float, background_iou: float) -> str:
-    """>= match_iou -> the matched GT class, < background_iou -> background, otherwise ambiguous."""
-    if max_iou >= match_iou and gt_label is not None:
+def iou_to_y(max_iou: float, gt_label: str | None, match_iou: float, background_iou: float) -> str | None:
+    """>= match_iou -> the GT class, < background_iou -> background, in between -> None (ambiguous)."""
+    if max_iou >= match_iou:
         return gt_label
     if max_iou < background_iou:
         return BACKGROUND
-    return AMBIGUOUS
+    return None
 
 
-def label_candidates(candidates: list[dict], frames: list[dict], gt: BrackishGT, cfg: dict) -> list[dict]:
-    """One label row per candidate: y is a class, 'background' or 'ambiguous' (not scored)."""
-    match_iou, background_iou = cfg["label"]["match_iou"], cfg["label"]["background_iou"]
-    file_of = {(f["clip"], f["frame_idx"]): f["file"] for f in frames}
-    by_frame: dict[tuple, list[dict]] = {}
-    for c in candidates:
-        by_frame.setdefault((c["clip"], c["frame_idx"]), []).append(c)
+def label_boxes(detections: list[dict], gt: BrackishGT, cfg: dict) -> list[dict]:
+    """One label per detection: class-agnostic max IoU with the frame's GT boxes.
 
-    rows = {}
-    for key, cands in by_frame.items():
-        gt_boxes = gt.frame_boxes(file_of[key])
-        ious = iou_matrix([c["box_xyxy"] for c in cands], [g.box_xyxy for g in gt_boxes])
-        for i, c in enumerate(cands):
+    Frames with unknown GT (outside every split list) are not scored.
+    """
+    match_iou, bg_iou = cfg["label"]["match_iou"], cfg["label"]["background_iou"]
+    by_frame: dict[str, list[dict]] = defaultdict(list)
+    for d in detections:
+        by_frame[d["file"]].append(d)
+    labels = {}
+    for file, dets in by_frame.items():
+        status = gt.status(file)
+        gts = gt.frame_boxes(file)
+        ious = iou_matrix([d["box_xyxy"] for d in dets], [g.box_xyxy for g in gts])
+        for i, d in enumerate(dets):
             j = int(ious[i].argmax()) if ious.shape[1] else None
             max_iou = float(ious[i, j]) if j is not None else 0.0
-            matched = gt_boxes[j] if j is not None and max_iou > 0 else None
-            y = iou_to_label(max_iou, matched.label if matched else None, match_iou, background_iou)
-            rows[c["cand_id"]] = {
-                "cand_id": c["cand_id"],
-                "max_iou": round(max_iou, 4),
-                "y": y,
-                "matched_object_id": matched.object_id if matched else None,
-                "matched_gt_label": matched.label if matched else None,
-                "scored": y != AMBIGUOUS,
-            }
-    return [rows[c["cand_id"]] for c in candidates]
+            hit = gts[j] if j is not None and max_iou > 0 else None
+            y = None if status == "unknown" else iou_to_y(max_iou, hit.label if hit else None, match_iou, bg_iou)
+            labels[d["box_id"]] = {"box_id": d["box_id"], "gt_status": status, "max_iou": round(max_iou, 4),
+                                   "matched_object_id": hit.object_id if hit else None,
+                                   "matched_label": hit.label if hit else None, "y": y, "scored": y is not None}
+    return [labels[d["box_id"]] for d in detections]
 
 
-def detector_coverage(candidates: list[dict], frames: list[dict], gt: BrackishGT, match_iou: float,
-                      classes: list[str]) -> dict:
-    """Per GT class: objects, objects covered by a candidate with IoU >= match_iou (recall upper bound)."""
-    by_frame: dict[tuple, list] = {}
-    for c in candidates:
-        by_frame.setdefault((c["clip"], c["frame_idx"]), []).append(c["box_xyxy"])
-    n_gt, n_hit = Counter(), Counter()
-    for f in frames:
-        gt_boxes = gt.frame_boxes(f["file"])
-        if not gt_boxes:
+def label_tracks(tracks: list[dict], box_labels: dict[str, dict], ok_share: float) -> list[dict]:
+    """y_track = 1 when >= ok_share of the track's scored boxes have y = its majority class.
+
+    type: correct | misclassified (mostly another animal) | false (mostly background) | unscored.
+    """
+    rows = []
+    for t in tracks:
+        ys = [box_labels[b]["y"] for b in t["box_ids"] if box_labels[b]["scored"]]
+        if not ys:
+            rows.append({"track_uid": t["track_uid"], "y_track": None, "type": "unscored", "n_scored": 0,
+                         "y_votes": {}})
             continue
-        ious = iou_matrix([g.box_xyxy for g in gt_boxes], by_frame.get((f["clip"], f["frame_idx"]), []))
-        for g, row in zip(gt_boxes, ious, strict=True):
-            n_gt[g.label] += 1
-            n_hit[g.label] += int(len(row) > 0 and row.max() >= match_iou)
-    per_class = {c: {"gt": n_gt[c], "covered": n_hit[c], "missed": n_gt[c] - n_hit[c],
-                     "recall_upper_bound": n_hit[c] / n_gt[c] if n_gt[c] else None}
-                 for c in classes if c != BACKGROUND}
-    total_gt, total_hit = sum(n_gt.values()), sum(n_hit.values())
-    return {"gt": total_gt, "covered": total_hit, "missed": total_gt - total_hit,
-            "recall_upper_bound": total_hit / total_gt if total_gt else None, "per_class": per_class}
+        share = sum(y == t["majority_class"] for y in ys) / len(ys)
+        ok = share >= ok_share
+        others = Counter(y for y in ys if y != t["majority_class"])
+        kind = "correct" if ok else ("false" if others.most_common(1)[0][0] == BACKGROUND else "misclassified")
+        rows.append({"track_uid": t["track_uid"], "y_track": int(ok), "type": kind, "n_scored": len(ys),
+                     "majority_share_correct": round(share, 3), "y_votes": dict(Counter(ys).most_common())})
+    return rows
 
 
-def label_summary(candidates: list[dict], labels: list[dict], coverage: dict, classes: list[str]) -> dict:
-    """Count flow: GT objects -> covered/missed; candidates -> y per class, ambiguous, scored."""
-    y = Counter(r["y"] for r in labels)
-    dino_vs_y = Counter((c.get("dino_label"), r["y"]) for c, r in zip(candidates, labels, strict=True)
-                        if c.get("dino_label") is not None)
-    return {
-        "gt_objects": coverage,
-        "candidates": len(candidates),
-        "scored": sum(r["scored"] for r in labels),
-        "ambiguous": y[AMBIGUOUS],
-        "y_per_class": {c: y[c] for c in classes},
-        "dino_label_counts": dict(Counter(c["dino_label"] for c in candidates if c.get("dino_label") is not None)),
-        "dino_label_vs_y": {f"{a}->{b}": n for (a, b), n in sorted(dino_vs_y.items())},
-    }
+def missed_objects(detections: list[dict], frames: list[dict], gt: BrackishGT, match_iou: float) -> dict:
+    """GT objects with no detection at IoU >= match_iou (no judge can recover them), per class."""
+    by_frame: dict[str, list] = defaultdict(list)
+    for d in detections:
+        by_frame[d["file"]].append(d["box_xyxy"])
+    total, covered = Counter(), Counter()
+    for f in frames:
+        gts = gt.frame_boxes(f["file"])
+        if not gts:
+            continue
+        ious = iou_matrix([g.box_xyxy for g in gts], by_frame.get(f["file"], []))
+        for i, g in enumerate(gts):
+            total[g.label] += 1
+            covered[g.label] += int(ious.shape[1] > 0 and ious[i].max() >= match_iou)
+    n, c = sum(total.values()), sum(covered.values())
+    return {"n_gt_objects": n, "n_covered": c, "recall_upper_bound": c / n if n else None,
+            "per_class": {k: {"gt": total[k], "covered": covered[k],
+                              "recall_upper_bound": covered[k] / total[k]} for k in sorted(total)}}

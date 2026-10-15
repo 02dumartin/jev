@@ -1,108 +1,91 @@
-"""S8: overlays of sampled frames (viz/): one folder per view (GT, DINO candidates, each system) + compare/.
+"""evaluation/viz/ (sample frames) and evaluation/videos/ (one mp4 per video).
 
-Box colour rule for a system's call (BGR for OpenCV):
-  correct animal = green, animal judged as another animal = yellow, background judged as an
-  animal (FP) = red, animal judged as background (FN) = orange (thin), background kept as
-  background = grey (thin), ambiguous y = white (thin).
+Colours (BGR): green = right class, yellow = animal with the wrong class, red = kept but no animal,
+orange dashed = an animal the system dropped, grey thin = dropped and indeed no animal.
 """
 
+from collections import defaultdict
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from jevgate.core.config import BACKGROUND
-from jevgate.core.runio import RunDir
 from jevgate.data.brackish import image_path
-from jevgate.data.labels import AMBIGUOUS
 
-GREEN, YELLOW, RED, ORANGE, GREY, WHITE = (80, 190, 80), (0, 200, 235), (60, 60, 230), (0, 140, 255), \
-    (150, 150, 150), (255, 255, 255)
-
-
-def call_colour(y: str, pred: str) -> tuple[tuple, int]:
-    """(colour, thickness) for a system's call on a box with label y."""
-    if y == AMBIGUOUS:
-        return WHITE, 1
-    if y == BACKGROUND:
-        return (GREY, 1) if pred == BACKGROUND else (RED, 2)
-    if pred == BACKGROUND:
-        return ORANGE, 1
-    return (GREEN, 2) if pred == y else (YELLOW, 2)
+GREEN, YELLOW, RED, ORANGE, GREY = (80, 200, 80), (0, 210, 240), (60, 60, 230), (0, 140, 255), (140, 140, 140)
+PANELS = [("yolo", "1 YOLO per frame"), ("track_vote", "2 track majority"),
+          ("vlm_all", "3 VLM on every track"), ("gate", "5 Jev gate -> VLM")]
 
 
-def _text(img, text, x, y, colour):
-    cv2.putText(img, text, (x, max(10, y)), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.putText(img, text, (x, max(10, y)), cv2.FONT_HERSHEY_SIMPLEX, 0.38, colour, 1, cv2.LINE_AA)
+def _colour(pred: str, y: str | None):
+    if pred != BACKGROUND:
+        return GREEN if pred == y else (RED if y == BACKGROUND else YELLOW if y else GREY)
+    return ORANGE if y not in (BACKGROUND, None) else None
 
 
-def _caption(img, text):
-    cv2.rectangle(img, (0, 0), (img.shape[1], 22), (0, 0, 0), -1)
-    cv2.putText(img, text, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-    return img
-
-
-def draw_gt(img, gt_boxes):
-    for g in gt_boxes:
+def draw(img: np.ndarray, boxes: list[dict], preds: dict[str, str], ys: dict[str, str | None], gt=None) -> np.ndarray:
+    for g in gt or []:
         x1, y1, x2, y2 = (int(round(v)) for v in g.box_xyxy)
-        cv2.rectangle(img, (x1, y1), (x2, y2), GREEN, 2)
-        _text(img, g.label, x1, y1 - 3, GREEN)
-    return img
-
-
-def draw_dino(img, cands, labels):
-    for c in cands:
-        x1, y1, x2, y2 = (int(round(v)) for v in c["box_xyxy"])
-        y = labels[c["cand_id"]]["y"]
-        colour = WHITE if y == AMBIGUOUS else GREY if y == BACKGROUND else GREEN
-        cv2.rectangle(img, (x1, y1), (x2, y2), colour, 1 if y in (AMBIGUOUS, BACKGROUND) else 2)
-        if c.get("dino_label") is not None:
-            _text(img, f"{c['dino_label']} {c['dino_score']:.2f}", x1, y1 - 3, colour)
-    return img
-
-
-def draw_calls(img, cands, labels, decisions):
-    for c in cands:
-        x1, y1, x2, y2 = (int(round(v)) for v in c["box_xyxy"])
-        d = decisions[c["cand_id"]]
-        colour, width = call_colour(labels[c["cand_id"]]["y"], d["pred"])
-        cv2.rectangle(img, (x1, y1), (x2, y2), colour, width)
-        if d["pred"] != BACKGROUND or labels[c["cand_id"]]["y"] not in (BACKGROUND, AMBIGUOUS):
-            tag = f"{d['pred']} {d['confidence']:.2f}" + (" >VLM" if d.get("routed_to") == "vlm" else "")
-            _text(img, tag, x1, y1 - 3, colour)
-    return img
-
-
-def render_samples(run: RunDir, gt, n: int, seed: int) -> Path:
-    """n random frames -> viz/<view>/<clip>-<frame>.jpg per view, and viz/compare/ with all views in one grid."""
-    cfg = run.config()
-    frames = run.read("frames")
-    boxes = run.read("boxes")
-    labels = {b["cand_id"]: b for b in boxes}
-    by_frame: dict[tuple, list] = {}
+        cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 1)
     for b in boxes:
-        by_frame.setdefault((b["clip"], b["frame_idx"]), []).append(b)
-    systems = {s: {r["cand_id"]: r for r in rows} for s, rows in run.system_rows().items()}
-    views = [s for s in ("threshold", "vlm", "jev", cfg["gate"]["primary"]) if s in systems]
-    out = run.path / "viz"
-    rng = np.random.default_rng(seed)
-    for k in sorted(rng.choice(len(frames), size=min(n, len(frames)), replace=False)):
-        f = frames[k]
-        base = cv2.imread(str(image_path(cfg, f["file"])))
-        cands = by_frame.get((f["clip"], f["frame_idx"]), [])
-        stem = f"{f['clip'][-25:]}-{f['frame_idx']:04d}.jpg"
-        panels = {"gt": _caption(draw_gt(base.copy(), gt.frame_boxes(f["file"])), f"GT  {f['file']}")}
-        if cfg["candidates"]["source"] == "dino":
-            panels["dino"] = _caption(draw_dino(base.copy(), cands, labels), f"DINO candidates ({len(cands)})")
-        panels |= {s: _caption(draw_calls(base.copy(), cands, labels, systems[s]), s) for s in views}
-        for view, img in panels.items():
-            (out / view).mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(str(out / view / stem), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
-        tiles = list(panels.values())
-        cols = 3 if len(tiles) > 4 else 2
-        tiles += [np.zeros_like(base)] * (-len(tiles) % cols)
-        sheet = np.vstack([np.hstack(tiles[r:r + cols]) for r in range(0, len(tiles), cols)])
-        sheet = cv2.resize(sheet, None, fx=0.55, fy=0.55, interpolation=cv2.INTER_AREA)
-        (out / "compare").mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(out / "compare" / stem), sheet, [cv2.IMWRITE_JPEG_QUALITY, 88])
-    return out
+        pred, y = preds[b["box_id"]], ys[b["box_id"]]
+        x1, y1, x2, y2 = (int(round(v)) for v in b["box_xyxy"])
+        colour = _colour(pred, y)
+        if colour is None:
+            cv2.rectangle(img, (x1, y1), (x2, y2), GREY, 1)
+            continue
+        cv2.rectangle(img, (x1, y1), (x2, y2), colour, 2 if pred != BACKGROUND else 1)
+        if pred != BACKGROUND:
+            tag = f"{pred} {b['conf']:.2f}" + (f" #{b['track_uid'].split('#')[1]}" if b["track_uid"] else "")
+            cv2.putText(img, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, colour, 1, cv2.LINE_AA)
+    return img
+
+
+def caption(img: np.ndarray, text: str) -> np.ndarray:
+    cv2.rectangle(img, (0, 0), (img.shape[1], 24), (0, 0, 0), -1)
+    cv2.putText(img, text, (8, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+    return img
+
+
+class Renderer:
+    """Indexes boxes per frame once; draws sample sheets and videos."""
+
+    def __init__(self, cfg: dict, frames: list[dict], detections: list[dict], judgments: list[dict], gt):
+        self.cfg, self.frames, self.gt = cfg, frames, gt
+        self.by_frame = defaultdict(list)
+        for d in detections:
+            self.by_frame[d["file"]].append(d)
+        self.preds = {s: {j["box_id"]: j[s] for j in judgments} for s, _ in PANELS if s in judgments[0]} \
+            if judgments else {}
+        self.ys = {j["box_id"]: j["y"] for j in judgments}
+
+    def panel(self, f: dict, system: str, title: str) -> np.ndarray:
+        img = cv2.imread(str(image_path(self.cfg, f["file"])))
+        img = draw(img, self.by_frame[f["file"]], self.preds[system], self.ys, self.gt.frame_boxes(f["file"]))
+        return caption(img, f"{title}   {f['file']}")
+
+    def samples(self, out: Path, n: int, seed: int) -> None:
+        picks = np.random.default_rng(seed).choice(len(self.frames), size=min(n, len(self.frames)), replace=False)
+        for k in sorted(picks):
+            f = self.frames[k]
+            panels = [self.panel(f, s, t) for s, t in PANELS if s in self.preds]
+            while len(panels) % 2:
+                panels.append(np.zeros_like(panels[0]))
+            sheet = np.vstack([np.hstack(panels[i:i + 2]) for i in range(0, len(panels), 2)])
+            sheet = cv2.resize(sheet, None, fx=0.6, fy=0.6, interpolation=cv2.INTER_AREA)
+            cv2.imwrite(str(out / f"{Path(f['file']).stem}.jpg"), sheet, [cv2.IMWRITE_JPEG_QUALITY, 88])
+
+    def video(self, out: Path, video: str, left: str, right: str, fps: int) -> Path:
+        """Left: system `left`, right: system `right`, frame by frame (mp4v)."""
+        titles = dict(PANELS)
+        path, writer = out / f"{video}.mp4", None
+        for f in (f for f in self.frames if f["video"] == video):
+            frame = np.hstack([self.panel(f, left, titles[left]), self.panel(f, right, titles[right])])
+            if writer is None:
+                writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
+                                         (frame.shape[1], frame.shape[0]))
+            writer.write(frame)
+        if writer is not None:
+            writer.release()
+        return path

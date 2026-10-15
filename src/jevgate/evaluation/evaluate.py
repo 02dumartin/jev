@@ -1,282 +1,220 @@
-"""S7: every number of a run (and the curve data the figures draw) -> metrics.json (PLAN.md §5, §6)."""
+"""S5: every number of a run (PLAN.md v6 §6) from the files of the earlier stages.
 
-import csv
+Box level: 7-way accuracy / macro F1 / per-class P,R, detection recall, flicker.
+Track level: Jev calibration (ECE, Brier, reliability), ROC / AUROC [CI] of Jev p, VLM p_yes, mean conf.
+Primary: Δacc(gate − vlm_all) with a cluster bootstrap over tracks, and the VLM call ratio.
+"""
+
 from collections import defaultdict
 
 import numpy as np
 
-from jevgate.core.config import BACKGROUND, class_names
-from jevgate.core.runio import RunDir
+from jevgate.core.config import BACKGROUND, output_classes
+from jevgate.detectors.track import count_flicker
 from jevgate.evaluation import metrics as M
-from jevgate.judges.gate import GATES, auto_curve, conf_grid, need_vlm_grid
+from jevgate.judges.gate import box_predictions, gate_decisions, tau_curve
 
-SYSTEM_ORDER = ["threshold", "vlm", "jev", "gate", "gate_conf", "gate_either"]
-SYSTEM_TITLE = {"threshold": "① detector (DINO score ≥ t)", "vlm": "② VLM", "jev": "③ Jev",
-                "gate": "④ Jev need_vlm gate", "gate_conf": "④a Jev confidence gate", "gate_either": "④c either gate"}
-PROB_SYSTEMS = ("threshold", "vlm", "jev")  # systems with a full class-score vector for ROC
+SYSTEM_ORDER = ["yolo", "track_vote", "vlm_all", "jev", "gate"]
 
 
 class RunData:
-    """Everything S7 needs from a run folder, indexed by cand_id."""
+    """Everything evaluation needs, indexed once."""
 
-    def __init__(self, run: RunDir):
-        self.run = run
-        self.cfg = run.config()
-        self.classes = class_names(self.cfg)
-        self.frames = run.read("frames")
-        self.cands = run.read("boxes")
-        self.labels = {b["cand_id"]: b for b in self.cands}
-        rows = run.system_rows()
-        self.decisions = {s: rows[s] for s in SYSTEM_ORDER if s in rows}
-        self.frame_of = {c["cand_id"]: (c["clip"], c["frame_idx"]) for c in self.cands}
-        self.scored_ids = [c["cand_id"] for c in self.cands if c["scored"]]
-        self.y = [self.labels[i]["y"] for i in self.scored_ids]
-        self.timing = run.meta().get("timing_s", {})
-        self.detect_ms = {(f["clip"], f["frame_idx"]): f["detect_ms"] for f in self.frames if f.get("detect_ms")}
+    def __init__(self, cfg, frames, detections, tracks, box_labels, track_labels, jev_rows, vlm_rows, th, timing):
+        self.cfg, self.frames, self.detections, self.tracks, self.th, self.timing = (
+            cfg, frames, detections, tracks, th, timing)
+        self.box_label = {r["box_id"]: r for r in box_labels}
+        self.track_label = {r["track_uid"]: r for r in track_labels}
+        self.majority = {t["track_uid"]: t["majority_class"] for t in tracks}
+        self.mean_conf = {t["track_uid"]: t["evidence"]["detector_conf"]["mean"] for t in tracks}
+        self.jev = {r["track_uid"]: r for r in jev_rows or []}
+        self.vlm = {r["track_uid"]: r for r in vlm_rows or []}
 
-    def scored_rows(self, system: str) -> list[dict]:
-        by_id = {r["cand_id"]: r for r in self.decisions[system]}
-        return [by_id[i] for i in self.scored_ids]
-
-
-def _frame_times(data: RunData, system: str) -> dict[tuple, float]:
-    """End-to-end ms per frame if the system ran online: DINO + judging that frame's boxes."""
-    rows = data.decisions[system]
-    per_frame = defaultdict(float)
-    if system in ("jev",) or system in GATES:
-        # one Jev request per frame (per_frame batching): count its latency once per frame
-        seen = set()
-        jev = {r["cand_id"]: r for r in data.decisions["jev"]}
-        for r in rows:
-            key = data.frame_of[r["cand_id"]]
-            j = jev[r["cand_id"]]
-            if key not in seen:
-                per_frame[key] += j.get("request_latency_ms", j["latency_ms"] * j.get("request_size", 1))
-                seen.add(key)
-            if system in GATES and r["routed_to"] == "vlm":
-                per_frame[key] += r["latency_ms"] - j["latency_ms"]
-    elif system == "vlm":
-        for r in rows:
-            per_frame[data.frame_of[r["cand_id"]]] += r["latency_ms"]
-    return {k: data.detect_ms.get(k, 0.0) + per_frame.get(k, 0.0) for k in (
-        (f["clip"], f["frame_idx"]) for f in data.frames)}
+    def accepts(self) -> dict[str, dict | None]:
+        """Per track-judging system: track_uid -> accepted?; and the gate's routing rows."""
+        out: dict = {"track_vote": None}
+        if self.vlm:
+            out["vlm_all"] = {u: r["p_yes"] >= self.th["v"] for u, r in self.vlm.items()}
+        if self.jev:
+            out["jev"] = {u: r["p_ok"] >= 0.5 for u, r in self.jev.items()}
+        if self.vlm and self.jev:
+            self.gate_rows = gate_decisions(list(self.jev.values()), out["vlm_all"],
+                                            {u: r["latency_ms"] for u, r in self.vlm.items()}, self.th["tau"])
+            out["gate"] = {r["track_uid"]: r["accept"] for r in self.gate_rows}
+        return out
 
 
-def _timing(data: RunData, system: str) -> dict:
-    rows = data.decisions[system]
-    lat = [r["latency_ms"] for r in rows]
-    frame_ms = list(_frame_times(data, system).values())
-    vlm_ms = {r["cand_id"]: r["latency_ms"] for r in data.decisions.get("vlm", [])}
-    if system == "vlm":
-        judge_s = sum(vlm_ms.values()) / 1000
-    elif system in GATES:
-        routed_ms = sum(vlm_ms[r["cand_id"]] for r in rows if r["routed_to"] == "vlm")
-        judge_s = data.timing.get("jev", 0.0) + routed_ms / 1000
-    else:
-        judge_s = data.timing.get(system, 0.0)
-    mean_frame = float(np.mean(frame_ms)) if frame_ms else None
-    return {
-        "latency_ms_median": float(np.median(lat)) if lat else None,
-        "judge_time_s": round(judge_s, 2),
-        "detect_time_s": round(sum(data.detect_ms.values()) / 1000, 2),
-        "frame_ms_median": float(np.median(frame_ms)) if frame_ms else None,
-        "frame_ms_mean": mean_frame,
-        "fps": 1000 / mean_frame if mean_frame else None,
-    }
+def predictions(data: RunData) -> dict[str, dict[str, str]]:
+    """system -> box_id -> predicted class (six animals or background)."""
+    preds = {"yolo": box_predictions(data.detections, data.majority, None, conf_t=data.th["t"])}
+    for system, accept in data.accepts().items():
+        preds[system] = box_predictions(data.detections, data.majority, accept)
+    return {s: preds[s] for s in SYSTEM_ORDER if s in preds and s in data.cfg["run"]["systems"]}
 
 
-def _system_row(data: RunData, system: str, boot: M.BlockBootstrap) -> dict:
-    cfg, classes = data.cfg, data.classes
-    rows = data.scored_rows(system)
-    preds = [r["pred"] for r in rows]
-    row = M.multiclass_metrics(data.y, preds, classes)
-    correct = np.asarray([p == yy for p, yy in zip(preds, data.y, strict=True)], dtype=float)
-    row["accuracy_ci"] = list(boot.ci(lambda idx: float(correct[idx].mean()) if len(idx) else None))
-    row["macro_precision"] = _mean([v["precision"] for v in row["per_class"].values() if v["support"]])
-    row["macro_recall"] = _mean([v["recall"] for v in row["per_class"].values() if v["support"]])
-    row["ovr"] = {c: M.ovr_counts(data.y, preds, c) for c in classes}
+def detection_recall(data: RunData, pred: dict[str, str], n_gt: int) -> float | None:
+    """GT objects that end up covered by a box with the right class (missed objects stay in the denominator)."""
+    hit = set()
+    for d in data.detections:
+        lab = data.box_label[d["box_id"]]
+        if lab["scored"] and lab["y"] not in (BACKGROUND, None) and pred[d["box_id"]] == lab["y"]:
+            hit.add((d["file"], lab["matched_object_id"]))
+    return len(hit) / n_gt if n_gt else None
 
-    calib = [(r, yy) for r, yy in zip(rows, data.y, strict=True)
-             if system in ("vlm", "jev") or (system in GATES and r["routed_to"] == "jev")]
-    if calib:
-        correct = [r["pred"] == yy for r, yy in calib]
-        conf = [r["confidence"] for r, _ in calib]
-        row["ece"] = M.ece_top(correct, conf, cfg["metrics"]["ece_bins"])
-        row["brier"] = M.brier_multi([yy for _, yy in calib], [r["probs"] for r, _ in calib], classes)
-        row["n_calibrated"] = len(calib)
-    else:
-        row["ece"] = row["brier"] = None
 
-    if system in PROB_SYSTEMS:
-        y_arr = np.asarray(data.y)
-        row["auc"] = {}
-        for c in classes:
-            yb = y_arr == c
-            score = np.asarray([r["probs"][c] for r in rows])
-            point = M.auroc(yb, score)
-            lo, hi = boot.ci(lambda idx, yb=yb, score=score: M.auroc(yb[idx], score[idx])) if point else (None, None)
-            row["auc"][c] = {"auc": point, "ci_low": lo, "ci_high": hi, "n_pos": int(yb.sum())}
+def flicker(data: RunData, pred: dict[str, str]) -> float:
+    """Mean over videos of the frame-to-frame change in the number of boxes shown as an animal."""
+    shown = defaultdict(int)
+    for d in data.detections:
+        shown[(d["video"], d["frame_idx"])] += pred[d["box_id"]] != BACKGROUND
+    per_video = defaultdict(list)
+    for f in data.frames:
+        per_video[f["video"]].append(shown[(f["video"], f["frame_idx"])])
+    return float(np.mean([count_flicker(v) for v in per_video.values()])) if per_video else 0.0
 
-    all_rows = data.decisions[system]
-    row["vlm_calls"] = {"vlm": len(all_rows)}.get(system, sum(r.get("routed_to") == "vlm" for r in all_rows))
-    row.update(_timing(data, system))
-    tokens = sum(r.get("tokens_in", 0) + r.get("tokens_out", 0) for r in all_rows)
-    price = cfg["cost"].get("jev_usd_per_1m_tokens")
-    row["jev_tokens"] = round(tokens)
-    row["jev_cost_usd"] = tokens / 1e6 * price if price is not None else None
-    if system in GATES:
-        auto = [r["pred"] == yy for r, yy in zip(rows, data.y, strict=True) if r["routed_to"] == "jev"]
-        row["auto_rate"] = 1 - row["vlm_calls"] / len(all_rows) if all_rows else None
-        row["auto_error"] = 1 - float(np.mean(auto)) if auto else None
+
+def judge_time(data: RunData, system: str) -> dict:
+    """Judge cost per system: VLM calls, per-track latency median, judge seconds, Jev tokens."""
+    jev_tokens = sum(r["tokens_in"] + r["tokens_out"] for r in data.jev.values())
+    if system == "vlm_all":
+        lat = [r["latency_ms"] for r in data.vlm.values()]
+        return {"vlm_calls": len(lat), "latency_ms_median": float(np.median(lat)) if lat else None,
+                "judge_time_s": sum(lat) / 1000, "jev_tokens": 0}
+    if system == "jev":
+        lat = [r["latency_ms"] for r in data.jev.values()]
+        return {"vlm_calls": 0, "latency_ms_median": float(np.median(lat)) if lat else None,
+                "judge_time_s": data.timing.get("jev_s"), "jev_tokens": round(jev_tokens)}
+    if system == "gate":
+        routed = [r for r in data.gate_rows if r["routed_to"] == "vlm"]
+        vlm_s = sum(data.vlm[r["track_uid"]]["latency_ms"] for r in routed) / 1000
+        lat = [r["latency_ms"] for r in data.gate_rows]
+        return {"vlm_calls": len(routed), "latency_ms_median": float(np.median(lat)) if lat else None,
+                "judge_time_s": (data.timing.get("jev_s") or 0.0) + vlm_s, "jev_tokens": round(jev_tokens)}
+    return {"vlm_calls": 0, "latency_ms_median": None, "judge_time_s": 0.0, "jev_tokens": 0}
+
+
+def system_row(data: RunData, system: str, pred: dict[str, str], n_gt: int) -> dict:
+    """One row of the results table."""
+    scored = [d["box_id"] for d in data.detections if data.box_label[d["box_id"]]["scored"]]
+    y = [data.box_label[b]["y"] for b in scored]
+    row = M.multiclass_metrics(y, [pred[b] for b in scored], output_classes(data.cfg))
+    row |= judge_time(data, system)
+    row["total_time_s"] = (data.timing.get("yolo_track_s") or 0.0) + (row["judge_time_s"] or 0.0)
+    price = data.cfg["cost"].get("jev_usd_per_1m_tokens")
+    row["jev_cost_usd"] = row["jev_tokens"] / 1e6 * price if price is not None else None
+    row["detection_recall"] = detection_recall(data, pred, n_gt)
+    row["flicker"] = flicker(data, pred)
+    if system == "gate":
+        auto = [r for r in data.gate_rows if r["routed_to"] == "jev"]
+        scored_auto = [r for r in auto if data.track_label[r["track_uid"]]["y_track"] is not None]
+        row["auto_rate"] = len(auto) / len(data.gate_rows) if data.gate_rows else None
+        row["auto_error"] = (float(np.mean([r["accept"] != bool(data.track_label[r["track_uid"]]["y_track"])
+                                            for r in scored_auto])) if scored_auto else None)
     return row
 
 
-def _mean(vals):
-    vals = [v for v in vals if v is not None]
-    return float(np.mean(vals)) if vals else None
-
-
-def _delta_acc(data: RunData, a: str, b: str, boot: M.BlockBootstrap) -> dict:
-    ca = np.asarray([r["pred"] == yy for r, yy in zip(data.scored_rows(a), data.y, strict=True)], dtype=float)
-    cb = np.asarray([r["pred"] == yy for r, yy in zip(data.scored_rows(b), data.y, strict=True)], dtype=float)
+def primary(data: RunData, preds: dict, cfg: dict) -> dict:
+    """Δacc(a − b) on scored boxes with a cluster bootstrap (cluster = track, or untracked boxes of a video)."""
+    a, b = cfg["endpoints"]["primary_pair"]
+    if a not in preds or b not in preds:
+        return {"pair": [a, b], "delta_acc": None, "call_ratio": None}
+    scored = [d for d in data.detections if data.box_label[d["box_id"]]["scored"]]
+    y = np.asarray([data.box_label[d["box_id"]]["y"] for d in scored])
+    ca = np.asarray([preds[a][d["box_id"]] for d in scored]) == y
+    cb = np.asarray([preds[b][d["box_id"]] for d in scored]) == y
+    clusters = [d["track_uid"] or f"untracked:{d['video']}" for d in scored]
+    boot = M.ClusterBootstrap(clusters, cfg["metrics"]["bootstrap"]["n"], cfg["metrics"]["bootstrap"]["seed"])
     lo, hi = boot.ci(lambda idx: float(ca[idx].mean() - cb[idx].mean()) if len(idx) else None)
-    return {"delta": float(ca.mean() - cb.mean()) if len(ca) else None, "ci_low": lo, "ci_high": hi}
+    n_tracks = len(data.gate_rows)
+    calls = sum(r["routed_to"] == "vlm" for r in data.gate_rows)
+    return {"pair": [a, b], "delta_acc": {"delta": float(ca.mean() - cb.mean()), "ci_low": lo, "ci_high": hi,
+                                          "n_clusters": len(boot.members)},
+            "call_ratio": calls / n_tracks if n_tracks else None}
 
 
-def _jev_selfknowledge(data: RunData) -> dict:
-    """Does Jev know when it is wrong? AUROC of need_vlm (and of 1 - confidence) for predicting Jev errors."""
-    rows = data.scored_rows("jev")
-    wrong = np.asarray([r["pred"] != yy for r, yy in zip(rows, data.y, strict=True)])
-    need = np.asarray([r["need_vlm"] for r in rows])
-    unsure = np.asarray([1 - r["confidence"] for r in rows])
-    by_level = {}
-    for lv in range(1, len(data.cfg["prompts"]["need_vlm_levels"]) + 1):
-        m = np.round(need) == lv
-        by_level[str(lv)] = {"n": int(m.sum()), "jev_error": float(wrong[m].mean()) if m.any() else None}
-    return {"auroc_need_vlm_for_error": M.auroc(wrong, need), "auroc_unconfidence_for_error": M.auroc(wrong, unsure),
-            "jev_error_by_need_vlm_level": by_level}
+def track_level(data: RunData, cfg: dict) -> tuple[dict, dict]:
+    """Jev calibration, AUROC [CI] of each track score, and the curve data for the figures."""
+    uids = [u for u, r in data.track_label.items() if r["y_track"] is not None]
+    y = np.asarray([data.track_label[u]["y_track"] for u in uids])
+    scores = {"jev_p_ok": data.jev, "vlm_p_yes": data.vlm, "mean_conf": data.mean_conf}
+    boot = M.ClusterBootstrap(uids, cfg["metrics"]["bootstrap"]["n"], cfg["metrics"]["bootstrap"]["seed"])
+    out, curves = {"n_tracks_scored": len(uids), "n_ok": int(y.sum()) if len(y) else 0}, {"roc": {}}
+    for name, src in scores.items():
+        if not src or not uids:
+            continue
+        s = np.asarray([src[u]["p_ok"] if name == "jev_p_ok" else src[u]["p_yes"] if name == "vlm_p_yes"
+                        else src[u] for u in uids], dtype=float)
+        lo, hi = boot.ci(lambda idx, s=s: M.auroc(y[idx], s[idx]))
+        out[f"auroc_{name}"] = {"auc": M.auroc(y, s), "ci_low": lo, "ci_high": hi}
+        curves["roc"][name] = M.roc_points(y, s)
+    if data.jev and uids:
+        p = np.asarray([data.jev[u]["p_ok"] for u in uids])
+        out["jev_ece"] = M.ece_top(y, p, cfg["metrics"]["ece_bins"])
+        out["jev_brier"] = M.brier_binary(y, p)
+        curves["reliability_jev"] = M.reliability_bins(y, p, cfg["metrics"]["ece_bins"])
+        grid = np.round(np.arange(0.5, 1.0 + 1e-9, cfg["gate"]["tau_grid_step"]), 6)
+        curves["tau_curve"] = tau_curve(y.tolist(), p.tolist(), grid)
+        out["class_fix"] = class_fix_summary(data, uids)
+    if data.vlm and uids:
+        accept = [data.vlm[u]["p_yes"] >= data.th["v"] for u in uids]
+        out["vlm_track_accuracy_at_v"] = float(np.mean(np.asarray(accept) == y.astype(bool)))
+    return out, curves
 
 
-def _sensitivity(data: RunData) -> dict:
-    """Accuracy under alternative labelling choices (exploratory)."""
-    empty = {(f["clip"], f["frame_idx"]) for f in data.frames if f["gt_status"] == "empty_by_absence"}
-    merge = {"small_fish": "fish"}
-    out = {"ambiguous_as_background": {}, "exclude_empty_frames": {}, "merge_fish_small_fish": {}}
-    for s, rows in data.decisions.items():
-        by_id = {r["cand_id"]: r for r in rows}
-        ys, ps = zip(*[(data.labels[c["cand_id"]]["y"], by_id[c["cand_id"]]["pred"]) for c in data.cands],
-                     strict=True)
-        ids = [c["cand_id"] for c in data.cands]
-        amb = [(BACKGROUND if y == "ambiguous" else y, p) for y, p in zip(ys, ps, strict=True)]
-        out["ambiguous_as_background"][s] = float(np.mean([y == p for y, p in amb]))
-        keep = [(y, p) for i, y, p in zip(ids, ys, ps, strict=True)
-                if y != "ambiguous" and data.frame_of[i] not in empty]
-        out["exclude_empty_frames"][s] = float(np.mean([y == p for y, p in keep])) if keep else None
-        mer = [(merge.get(y, y), merge.get(p, p)) for y, p in zip(ys, ps, strict=True) if y != "ambiguous"]
-        out["merge_fish_small_fish"][s] = float(np.mean([y == p for y, p in mer])) if mer else None
-    return out
+def class_fix_summary(data: RunData, uids: list[str]) -> dict:
+    """Exploratory: for tracks that are not their majority class, does Jev's class_fix name the truth?"""
+    hits = defaultdict(list)
+    for u in uids:
+        lab = data.track_label[u]
+        if lab["type"] in ("misclassified", "false"):
+            truth = max(lab["y_votes"], key=lab["y_votes"].get)
+            truth = "not_an_animal" if truth == BACKGROUND else truth
+            hits[lab["type"]].append(data.jev[u]["fix_choice"] == truth)
+    return {k: {"n": len(v), "fix_matches_truth": float(np.mean(v))} for k, v in hits.items()}
 
 
-def _frame_visibility(data: RunData) -> dict:
-    keys = [(f["clip"], f["frame_idx"]) for f in data.frames]
-    has_animal = {(f["clip"], f["frame_idx"]): f["gt_status"] == "annotated" for f in data.frames}
-    out = {}
-    for s, rows in data.decisions.items():
-        animal = defaultdict(bool)
-        for r in rows:
-            animal[data.frame_of[r["cand_id"]]] |= r["pred"] != BACKGROUND
-        out[s] = M.frame_visible_accuracy(keys, has_animal, animal)
-    return out
+def sensitivity(data: RunData, preds: dict) -> dict:
+    """Accuracy when ambiguous boxes (0.3 <= IoU < 0.5) are scored as background."""
+    rows = [d for d in data.detections if data.box_label[d["box_id"]]["gt_status"] != "unknown"]
+    y = [data.box_label[d["box_id"]]["y"] or BACKGROUND for d in rows]
+    return {"ambiguous_as_background": {s: float(np.mean([p[d["box_id"]] == yy for d, yy in zip(rows, y, strict=True)]))
+                                        for s, p in preds.items()}}
 
 
-def _plot_data(data: RunData, systems: dict) -> dict:
-    cfg, classes = data.cfg, data.classes
-    y_arr = np.asarray(data.y)
-    plots = {"roc": {}, "operating_points": {}, "reliability": {}, "auto_curves": {}}
-    for s in data.decisions:
-        rows = data.scored_rows(s)
-        if s in PROB_SYSTEMS:
-            plots["roc"][s] = {c: M.roc_points(y_arr == c, [r["probs"][c] for r in rows]) for c in classes}
-        plots["operating_points"][s] = {c: {"fpr": 1 - v["spec"] if v["spec"] is not None else None, "tpr": v["sens"]}
-                                        for c, v in systems[s]["ovr"].items()}
-        if s in ("vlm", "jev"):
-            plots["reliability"][s] = M.reliability_bins([r["pred"] == yy for r, yy in zip(rows, data.y, strict=True)],
-                                                         [r["confidence"] for r in rows], cfg["metrics"]["ece_bins"])
-    if "jev" in data.decisions:
-        rows = data.scored_rows("jev")
-        correct = [r["pred"] == yy for r, yy in zip(rows, data.y, strict=True)]
-        levels = len(cfg["prompts"]["need_vlm_levels"])
-        plots["auto_curves"]["need_vlm"] = auto_curve(correct, [r["need_vlm"] for r in rows],
-                                                      need_vlm_grid(levels, cfg["gate"]["need_vlm_grid_step"]), "below")
-        plots["auto_curves"]["confidence"] = auto_curve(correct, [r["confidence"] for r in rows],
-                                                        conf_grid(cfg["gate"]["conf_grid_step"]), "at_least")
-    return plots
-
-
-def write_errors(data: RunData, path) -> int:
-    """Boxes that any of ② ③ or the primary gate got wrong, with every system's call."""
-    systems = [s for s in SYSTEM_ORDER if s in data.decisions]
-    by_sys = {s: {r["cand_id"]: r for r in data.decisions[s]} for s in systems}
-    file_of = {(f["clip"], f["frame_idx"]): f["file"] for f in data.frames}
-    primary = data.cfg["gate"]["primary"]
-    n = 0
-    with open(path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["cand_id", "file", "box_xyxy", "y", "max_iou", "dino_label", "dino_score"]
-                   + [f"{s}_pred" for s in systems] + [f"{s}_conf" for s in systems] + ["need_vlm", "routed_to"])
-        cand = {c["cand_id"]: c for c in data.cands}
-        for i, yy in zip(data.scored_ids, data.y, strict=True):
-            wrong = [s for s in ("vlm", "jev", primary) if s in by_sys and by_sys[s][i]["pred"] != yy]
-            if not wrong:
-                continue
-            c = cand[i]
-            w.writerow([i, file_of[data.frame_of[i]], c["box_xyxy"], yy, data.labels[i]["max_iou"],
-                        c.get("dino_label"), c.get("dino_score")] + [by_sys[s][i]["pred"] for s in systems]
-                       + [by_sys[s][i]["confidence"] for s in systems]
-                       + [by_sys["jev"][i].get("need_vlm") if "jev" in by_sys else None,
-                          by_sys[primary][i].get("routed_to") if primary in by_sys else None])
-            n += 1
-    return n
-
-
-def evaluate_run(run: RunDir, n_flow: dict) -> dict:
-    """metrics.json content (curve data included) + errors.csv for a run whose boxes and judgments exist."""
-    data = RunData(run)
-    cfg = data.cfg
-    b = cfg["metrics"]["bootstrap"]
-    boot = M.BlockBootstrap([data.frame_of[i] for i in data.scored_ids], b["block_frames"], b["n"], b["seed"])
-    systems = {s: _system_row(data, s, boot) for s in data.decisions}
-
-    primary_gate = cfg["gate"]["primary"]
-    deltas = {g: _delta_acc(data, g, "vlm", boot) for g in GATES if g in data.decisions and "vlm" in data.decisions}
-    call_ratio = {g: systems[g]["vlm_calls"] / systems["vlm"]["vlm_calls"] for g in deltas}
-    primary = {"gate": primary_gate, "delta_acc": deltas.get(primary_gate), "call_ratio": call_ratio.get(primary_gate)}
-    ci_low = primary["delta_acc"]["ci_low"] if primary["delta_acc"] else None
-    endpoints = M.evaluate_endpoints(ci_low, primary["call_ratio"], cfg["endpoints"]["sequential"])
-
-    n_errors = write_errors(data, run.file("errors"))
-    return {
-        "run_id": run.run_id,
-        "split": cfg["run"]["split"],
-        "git_commit": run.git().get("commit"),
-        "git_dirty": run.git().get("dirty"),
-        "classes": data.classes,
-        "n_clip": len({f["clip"] for f in data.frames}),
-        "n_frame": len(data.frames),
-        "n_box": len(data.scored_ids),
-        "n_candidates": len(data.cands),
-        "candidate_source": cfg["candidates"]["source"],
-        "n_flow": n_flow,
-        "thresholds": run.meta().get("thresholds"),
-        "systems": systems,
-        "primary": primary,
-        "secondary_gate_deltas": {g: {"delta_acc": deltas[g], "call_ratio": call_ratio[g]} for g in deltas},
-        "endpoints": endpoints,
-        "jev_self_knowledge": _jev_selfknowledge(data) if "jev" in data.decisions else None,
-        "frame_visible_accuracy": _frame_visibility(data),
-        "sensitivity": _sensitivity(data),
-        "timing_stages_s": data.timing,
-        "jev_models": sorted({r.get("jev_model") for r in data.decisions.get("jev", []) if r.get("jev_model")}),
-        "n_error_rows": n_errors,
-        "curves": _plot_data(data, systems),
+def evaluate(data: RunData, missed: dict, budget: dict, cfg: dict) -> tuple[dict, list[dict], dict]:
+    """(metrics.json, judgments rows, curve data)."""
+    preds = predictions(data)
+    systems = {s: system_row(data, s, p, missed["n_gt_objects"]) for s, p in preds.items()}
+    prim = primary(data, preds, cfg) if "gate" in preds else {"delta_acc": None, "call_ratio": None}
+    ci_low = prim["delta_acc"]["ci_low"] if prim.get("delta_acc") else None
+    endpoints = M.evaluate_endpoints(ci_low, prim.get("call_ratio"), cfg["endpoints"]["sequential"])
+    tl, curves = track_level(data, cfg)
+    curves["confusion"] = {s: row["confusion"] for s, row in systems.items()}
+    labels = list(data.box_label.values())
+    untracked = [d for d in data.detections if d["track_uid"] is None]
+    metrics = {
+        "split": cfg["run"]["split"], "thresholds": data.th,
+        "n": {"videos": len({f["video"] for f in data.frames}), "frames": len(data.frames),
+              "detections": len(data.detections), "boxes_scored": sum(r["scored"] for r in labels),
+              "boxes_ambiguous": sum(r["y"] is None and r["gt_status"] != "unknown" for r in labels),
+              "boxes_unknown_gt": sum(r["gt_status"] == "unknown" for r in labels),
+              "tracks": len(data.tracks), "tracks_scored": tl["n_tracks_scored"],
+              "track_types": dict(sorted(_count(r["type"] for r in data.track_label.values()).items())),
+              "untracked_boxes": len(untracked),
+              "untracked_real_animals": sum(data.box_label[d["box_id"]]["y"] not in (BACKGROUND, None)
+                                            for d in untracked)},
+        "missed_objects": missed,
+        "systems": systems, "primary": prim, "endpoints": endpoints, "track_level": tl,
+        "sensitivity": sensitivity(data, preds), "timing": data.timing, "budget_used": budget,
+        "jev_models": sorted({r["jev_model"] for r in data.jev.values() if r.get("jev_model")}),
     }
+    judgments = [{"box_id": d["box_id"], "track_uid": d["track_uid"], "y": data.box_label[d["box_id"]]["y"],
+                  **{s: p[d["box_id"]] for s, p in preds.items()}} for d in data.detections]
+    return metrics, judgments, curves
+
+
+def _count(items) -> dict:
+    out = defaultdict(int)
+    for i in items:
+        out[i] += 1
+    return dict(out)

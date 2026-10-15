@@ -12,6 +12,7 @@ def cfg():
     return load_config(REPO / "configs" / "base.yaml")
 
 
-def cand(cid, frame, box, score=0.5, clip="c", label="fish"):
-    return {"cand_id": cid, "clip": clip, "frame_idx": frame, "box_xyxy": box, "dino_label": label,
-            "dino_score": score}
+def det(box_id, frame, box, cls="crab", conf=0.5, track=None, video="v"):
+    """One detection row as written by VideoTracker."""
+    return {"box_id": box_id, "video": video, "frame_idx": frame, "file": f"{video}-{frame:04d}.png",
+            "box_xyxy": box, "cls": cls, "conf": conf, "track_uid": track}

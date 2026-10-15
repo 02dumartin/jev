@@ -1,5 +1,4 @@
-"""Scoring for the 7-way class judgment: accuracy, F1, one-vs-rest 2x2 / ROC / AUC, calibration,
-and frame-block bootstrap CIs (PLAN.md §6)."""
+"""Scoring: 7-way box accuracy and F1, ROC / AUC, calibration, and cluster-bootstrap CIs (PLAN.md v6 §6)."""
 
 from collections import defaultdict
 
@@ -99,46 +98,32 @@ def brier_multi(y, probs: list[dict], classes: list[str]) -> float | None:
     return float(((p - onehot) ** 2).sum(1).mean())
 
 
-def frame_blocks(frame_keys, block: int) -> list[list[tuple]]:
-    """Consecutive frames (within each clip, sorted) grouped into blocks for the bootstrap."""
-    by_clip: dict[str, list] = defaultdict(list)
-    for key in sorted(set(frame_keys)):
-        by_clip[key[0]].append(key)
-    return [keys[s:s + block] for keys in by_clip.values() for s in range(0, len(keys), block)]
+class ClusterBootstrap:
+    """Resample whole clusters (a track and all its boxes); statistics see the items of the drawn clusters."""
 
-
-class BlockBootstrap:
-    """Resample whole frame blocks; statistics are computed on the boxes of the sampled blocks."""
-
-    def __init__(self, box_frames: list[tuple], block: int, n: int, seed: int):
-        blocks = frame_blocks(box_frames, block)
-        block_of = {k: b for b, keys in enumerate(blocks) for k in keys}
+    def __init__(self, cluster_of_item: list, n: int, seed: int):
         members = defaultdict(list)
-        for i, key in enumerate(box_frames):
-            members[block_of[key]].append(i)
-        self.members = [np.asarray(members[b], dtype=int) for b in range(len(blocks))]
+        for i, key in enumerate(cluster_of_item):
+            members[key].append(i)
+        self.members = [np.asarray(v, dtype=int) for v in members.values()]
         rng = np.random.default_rng(seed)
-        self.block_draws = [rng.integers(0, len(blocks), len(blocks)) for _ in range(n)] if blocks else []
+        k = len(self.members)
+        self.draws = [rng.integers(0, k, k) for _ in range(n)] if k else []
 
     def ci(self, stat) -> tuple[float | None, float | None]:
-        """2.5 / 97.5 percentiles of stat(indices) over the resamples (None values skipped)."""
-        vals = []
-        for draw in self.block_draws:
-            v = stat(np.concatenate([self.members[b] for b in draw]))
-            if v is not None:
-                vals.append(v)
+        """2.5 / 97.5 percentiles of stat(item indices) over the resamples (None values skipped)."""
+        vals = [v for draw in self.draws
+                if (v := stat(np.concatenate([self.members[c] for c in draw]))) is not None]
         if not vals:
             return None, None
         lo, hi = np.percentile(vals, [2.5, 97.5])
         return float(lo), float(hi)
 
 
-def frame_visible_accuracy(frame_keys, has_animal: dict, predicted_animal: dict) -> float | None:
-    """Frame-level "is an animal shown?": predicted = any box judged an animal, truth = any GT box."""
-    keys = list(frame_keys)
-    if not keys:
-        return None
-    return float(np.mean([bool(has_animal[k]) == bool(predicted_animal.get(k, False)) for k in keys]))
+def brier_binary(y, p) -> float | None:
+    """Mean squared error of P(y = 1)."""
+    y, p = np.asarray(y, dtype=float), np.asarray(p, dtype=float)
+    return float(((p - y) ** 2).mean()) if len(y) else None
 
 
 def evaluate_endpoints(delta_ci_low: float | None, call_ratio: float | None, steps: list[dict]) -> list[dict]:

@@ -1,24 +1,19 @@
-"""Data contracts of a run folder (PLAN.md §3). Each check returns a list of violation strings."""
+"""Data contracts between stages (PLAN.md v6 §7). Each check returns a list of violation strings."""
 
 from collections import Counter
 
-from jevgate.core.config import class_names
+from jevgate.core.config import class_names, output_classes
 from jevgate.core.runio import RunDir
-from jevgate.data.brackish import evenly_spaced, split_files
-from jevgate.data.labels import AMBIGUOUS
-from jevgate.judges.gate import GATES
 
 REQUIRED = {
-    "frames": ["clip", "split", "frame_idx", "file", "gt_status", "detect_ms"],
-    "boxes": ["cand_id", "clip", "frame_idx", "file", "box_xyxy", "y", "max_iou", "matched_object_id", "scored",
-              "evidence"],
-    "boxes_dino": ["dino_label", "dino_score"],
-    "evidence": ["cand_id", "history_frame_idxs", "geometry", "track"],
-    "decision": ["pred", "probs", "confidence", "latency_ms"],
+    "detections": ["box_id", "video", "frame_idx", "file", "box_xyxy", "cls", "conf", "track_uid"],
+    "tracks": ["track_uid", "video", "box_ids", "rep_box_id", "majority_class", "evidence"],
+    "box_labels": ["box_id", "gt_status", "max_iou", "y", "scored"],
+    "track_labels": ["track_uid", "y_track", "type"],
+    "jev": ["track_uid", "p_ok", "fix_probs", "latency_ms", "tokens_in", "tokens_out"],
+    "vlm": ["track_uid", "p_yes", "latency_ms", "rep_box_id"],
 }
-METRIC_KEYS = ["systems", "n_box", "n_frame", "n_clip", "git_commit", "n_flow", "endpoints", "curves"]
-SYSTEM_COLUMNS = ["accuracy", "accuracy_ci", "macro_f1", "macro_precision", "macro_recall", "ece", "vlm_calls",
-                  "latency_ms_median", "frame_ms_mean", "fps", "per_class", "ovr", "confusion"]
+METRIC_KEYS = ["n", "systems", "primary", "endpoints", "track_level", "missed_objects", "timing", "thresholds"]
 
 
 def missing_fields(rows: list[dict], fields: list[str], name: str) -> list[str]:
@@ -28,109 +23,115 @@ def missing_fields(rows: list[dict], fields: list[str], name: str) -> list[str]:
         if absent:
             errors.append(f"{name} row {k}: missing {absent}")
             if len(errors) >= 5:
-                errors.append(f"{name}: further rows not listed")
-                break
+                return errors + [f"{name}: further rows not listed"]
     return errors
 
 
-def check_frames(frames, cfg) -> list[str]:
-    """Frame rows = the split list (or its evenly spaced subset for smoke runs)."""
-    errors = missing_fields(frames, REQUIRED["frames"], "frames")
-    expected = evenly_spaced(split_files(cfg, cfg["run"]["split"]), cfg["run"].get("max_frames"))
-    if [f["file"] for f in frames] != expected:
-        errors.append(f"frames: {len(frames)} rows do not match the {len(expected)} split frames")
-    return errors
+def same_ids(expected: list[str], got: list[str], name: str) -> list[str]:
+    if expected == got:
+        return []
+    missing, extra = set(expected) - set(got), set(got) - set(expected)
+    return [f"{name}: id mismatch (missing {len(missing)}, extra {len(extra)}, "
+            f"order differs={not missing and not extra})"]
 
 
-def check_evidence(evidence, cands, cfg) -> list[str]:
-    """Causality rule: history frames must be strictly earlier than the box's frame and at most K."""
-    errors = missing_fields(evidence, REQUIRED["evidence"], "evidence")
-    frame_of = {c["cand_id"]: c["frame_idx"] for c in cands}
-    k = cfg["evidence"]["history_frames"]
-    for e in evidence:
-        idx, hist = frame_of.get(e["cand_id"]), e["history_frame_idxs"]
-        if any(h >= idx for h in hist):
-            errors.append(f"evidence: future/current frame leak in {e['cand_id']}: {hist} vs {idx}")
-        if len(hist) > k:
-            errors.append(f"evidence: history longer than K={k} in {e['cand_id']}")
-    return errors
-
-
-def check_boxes(boxes, frames, cfg) -> list[str]:
-    """Schema, unique ids, boxes inside their (listed) frame, valid truth, causal evidence."""
-    dino = cfg["candidates"]["source"] == "dino"
-    errors = missing_fields(boxes, REQUIRED["boxes"] + (REQUIRED["boxes_dino"] if dino else []), "boxes")
+def check_detections(dets: list[dict], cfg: dict) -> list[str]:
+    errors = missing_fields(dets, REQUIRED["detections"], "detections")
     w, h = cfg["data"]["frame_wh"]
-    dup = [k for k, v in Counter(b["cand_id"] for b in boxes).items() if v > 1]
+    dup = [k for k, v in Counter(d["box_id"] for d in dets).items() if v > 1]
     if dup:
-        errors.append(f"boxes: duplicate cand_id {dup[:3]}")
-    listed = {(f["clip"], f["frame_idx"]) for f in frames}
-    allowed = set(class_names(cfg)) | {AMBIGUOUS}
-    for b in boxes:
-        x1, y1, x2, y2 = b["box_xyxy"]
-        if not (0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h):
-            errors.append(f"boxes: outside frame or degenerate {b['cand_id']} {b['box_xyxy']}")
-        if (b["clip"], b["frame_idx"]) not in listed:
-            errors.append(f"boxes: frame not in frames.jsonl {b['cand_id']}")
-        if b["y"] not in allowed or b["scored"] != (b["y"] != AMBIGUOUS):
-            errors.append(f"boxes: bad y/scored {b['cand_id']}={b['y']}")
-        if dino and (not 0 <= b["dino_score"] <= 1 or b["dino_label"] not in cfg["classes"]):
-            errors.append(f"boxes: bad detector fields {b['cand_id']}")
-        if len(errors) > 50:
-            return errors
-    errors += check_evidence([{"cand_id": b["cand_id"], **b["evidence"]} for b in boxes], boxes, cfg)
+        errors.append(f"detections: duplicate box_id {dup[:3]}")
+    for d in dets:
+        x1, y1, x2, y2 = d["box_xyxy"]
+        if not (-1 <= x1 < x2 <= w + 1 and -1 <= y1 < y2 <= h + 1):
+            errors.append(f"detections: box outside frame {d['box_id']} {d['box_xyxy']}")
+        if not cfg["track"]["conf"] - 1e-6 <= d["conf"] <= 1:
+            errors.append(f"detections: conf outside [track.conf, 1] {d['box_id']}")
+        if d["cls"] not in class_names(cfg):
+            errors.append(f"detections: unknown class {d['cls']}")
+    return errors[:20]
+
+
+def check_tracks(tracks: list[dict], dets: list[dict]) -> list[str]:
+    """Every tracked detection belongs to exactly its track; majority class is one of its votes."""
+    errors = missing_fields(tracks, REQUIRED["tracks"], "tracks")
+    by_track = {}
+    for d in dets:
+        if d["track_uid"] is not None:
+            by_track.setdefault(d["track_uid"], set()).add(d["box_id"])
+    if set(by_track) != {t["track_uid"] for t in tracks}:
+        errors.append("tracks: track_uids differ from the detections' track_uids")
+    for t in tracks:
+        if set(t["box_ids"]) != by_track.get(t["track_uid"], set()):
+            errors.append(f"tracks: box_ids of {t['track_uid']} differ from detections")
+        if t["rep_box_id"] not in t["box_ids"]:
+            errors.append(f"tracks: rep_box_id outside {t['track_uid']}")
+        if t["majority_class"] not in t["evidence"]["classes"]["votes"]:
+            errors.append(f"tracks: majority class not voted in {t['track_uid']}")
+    return errors[:20]
+
+
+def check_labels(box_labels, track_labels, dets, tracks, cfg) -> list[str]:
+    errors = missing_fields(box_labels, REQUIRED["box_labels"], "box_labels")
+    errors += missing_fields(track_labels, REQUIRED["track_labels"], "track_labels")
+    errors += same_ids([d["box_id"] for d in dets], [r["box_id"] for r in box_labels], "box_labels")
+    errors += same_ids([t["track_uid"] for t in tracks], [r["track_uid"] for r in track_labels], "track_labels")
+    valid = set(output_classes(cfg)) | {None}
+    errors += [f"box_labels: bad y {r['box_id']}={r['y']}" for r in box_labels if r["y"] not in valid][:5]
+    errors += [f"track_labels: bad y_track {r['track_uid']}" for r in track_labels if r["y_track"] not in (0, 1, None)]
     return errors
 
 
-def check_judgments(rows, boxes, cfg) -> list[str]:
-    """Same boxes in the same order, every system on every box, valid class distributions, gates consistent."""
-    errors = []
-    if [r["cand_id"] for r in rows] != [b["cand_id"] for b in boxes]:
-        return [f"judgments: cand_ids differ from boxes.jsonl ({len(rows)} vs {len(boxes)} rows)"]
-    classes = set(class_names(cfg))
-    expected = set(cfg["run"]["systems"])
+def check_judges(run: RunDir, tracks: list[dict]) -> list[str]:
+    errors, uids = [], [t["track_uid"] for t in tracks]
+    for name, key in (("jev", "p_ok"), ("vlm", "p_yes")):
+        if not run.exists(name):
+            continue
+        rows = run.read(name)
+        errors += missing_fields(rows, REQUIRED[name], name)
+        errors += same_ids(uids, [r["track_uid"] for r in rows], name)
+        errors += [f"{name}: {key} outside [0,1] {r['track_uid']}" for r in rows if not 0 <= r[key] <= 1][:5]
+    return errors
+
+
+def check_judgments(run: RunDir, dets: list[dict]) -> list[str]:
+    if not run.exists("judgments"):
+        return ["judgments.jsonl missing"]
+    rows = run.read("judgments")
+    errors = same_ids([d["box_id"] for d in dets], [r["box_id"] for r in rows], "judgments")
+    systems = [s for s in run.config()["run"]["systems"]]
+    valid = set(output_classes(run.config()))
     for r in rows:
-        if set(r["systems"]) != expected:
-            errors.append(f"judgments: systems {sorted(r['systems'])} != config for {r['cand_id']}")
-        for s, d in r["systems"].items():
-            errors += [f"judgments: {s} missing {f} for {r['cand_id']}" for f in REQUIRED["decision"] if f not in d]
-            if d.get("pred") not in classes or set(d.get("probs", {})) != classes:
-                errors.append(f"judgments: {s} bad pred/probs keys for {r['cand_id']}")
-            elif s != "threshold" and abs(sum(d["probs"].values()) - 1) > 0.02:
-                errors.append(f"judgments: {s} probs do not sum to 1 for {r['cand_id']}")
-            if s in GATES and "vlm" in r["systems"]:
-                if d.get("routed_to") not in ("jev", "vlm"):
-                    errors.append(f"judgments: {s} bad routed_to for {r['cand_id']}")
-                elif d["routed_to"] == "vlm" and d["pred"] != r["systems"]["vlm"]["pred"]:
-                    errors.append(f"judgments: {s} routed to vlm but pred differs for {r['cand_id']}")
-        if len(errors) > 50:
+        bad = [s for s in systems if r.get(s) not in valid]
+        if bad:
+            errors.append(f"judgments: {r['box_id']} has no valid prediction for {bad}")
+            break
+        if r["track_uid"] is None and any(r[s] != "background" for s in systems if s != "yolo"):
+            errors.append(f"judgments: untracked box {r['box_id']} kept by a track system")
             break
     return errors
 
 
 def check_metrics(run: RunDir) -> list[str]:
-    if not run.file("metrics").exists():
+    if not run.exists("metrics"):
         return ["metrics.json missing"]
     m = run.read_json("metrics")
-    errors = [f"metrics: missing {k}" for k in METRIC_KEYS if k not in m]
-    for system, row in m.get("systems", {}).items():
-        errors += [f"metrics.systems.{system}: missing {k}" for k in SYSTEM_COLUMNS if k not in row]
-    return errors
+    return [f"metrics: missing {k}" for k in METRIC_KEYS if k not in m]
 
 
 def check_run(run: RunDir) -> dict[str, list[str]]:
-    """All contracts for one run folder, keyed by file."""
+    """All contracts for one run folder, keyed by stage."""
     cfg = run.config()
-    report: dict[str, list[str]] = {}
-    if not run.file("frames").exists():
-        return {"frames": ["frames.jsonl missing"]}
-    frames = run.read("frames")
-    report["frames"] = check_frames(frames, cfg)
-    if not run.file("boxes").exists():
-        return report | {"boxes": ["boxes.jsonl missing"]}
-    boxes = run.read("boxes")
-    report["boxes"] = check_boxes(boxes, frames, cfg)
-    report["judgments"] = (check_judgments(run.read("judgments"), boxes, cfg) if run.file("judgments").exists()
-                           else ["judgments.jsonl missing"])
+    if not run.exists("detections"):
+        return {"yolo": ["detections.jsonl missing"]}
+    dets = run.read("detections")
+    tracks = run.read("tracks") if run.exists("tracks") else []
+    report = {"detections": check_detections(dets, cfg), "tracks": check_tracks(tracks, dets)}
+    if run.exists("box_labels") and run.exists("track_labels"):
+        report["labels"] = check_labels(run.read("box_labels"), run.read("track_labels"), dets, tracks, cfg)
+    else:
+        report["labels"] = ["label files missing"]
+    report["judges"] = check_judges(run, tracks)
+    report["judgments"] = check_judgments(run, dets)
     report["metrics"] = check_metrics(run)
     return report

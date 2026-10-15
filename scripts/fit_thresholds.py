@@ -1,4 +1,4 @@
-"""Freeze t, tau_need_vlm and tau_conf from a full dev run into thresholds.yaml (read by test runs, PLAN.md §7)."""
+"""Freeze t, v and tau from a full dev run into thresholds.yaml (read by the test run, PLAN.md §8)."""
 
 import argparse
 from pathlib import Path
@@ -12,20 +12,19 @@ REPO = Path(__file__).resolve().parents[1]
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--run-dir", type=Path, required=True, help="a dev run with all systems")
+    ap.add_argument("--run-dir", type=Path, required=True, help="a full dev run with every system")
     ap.add_argument("--out", type=Path, default=REPO / "thresholds.yaml")
     args = ap.parse_args()
-    run = RunDir(args.run_dir)
-    th = run.meta()["thresholds"]
+    th = yaml.safe_load(RunDir(args.run_dir).file("thresholds").read_text())
     if th.get("fit_split") != "dev":
         raise SystemExit("refusing: thresholds were not fitted on dev")
-    if th.get("max_frames"):
+    if th.get("max_videos") or th.get("max_frames_per_video"):
         raise SystemExit("refusing: thresholds come from a truncated (smoke) run")
-    if "tau_need_vlm" not in th:
-        raise SystemExit("refusing: run has no Jev decisions, gate thresholds missing")
+    missing = [k for k in ("t", "v", "tau") if k not in th]
+    if missing:
+        raise SystemExit(f"refusing: thresholds missing {missing}")
     args.out.write_text(yaml.safe_dump(th, sort_keys=False))
-    fitted = ", ".join(f"{k}={v}" for k, v in th.items() if k == "t" or k.startswith("tau"))
-    print(f"wrote {args.out}: {fitted} (from {run.run_id})")
+    print(f"wrote {args.out}: t={th['t']}, v={th['v']}, tau={th['tau']} (from {th['fit_run']})")
 
 
 if __name__ == "__main__":

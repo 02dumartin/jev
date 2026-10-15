@@ -20,15 +20,26 @@ COLUMNS = ["accuracy", "macro_f1", "macro_precision", "macro_recall", "ece", "vl
            "jev_cost_usd"]
 
 
+def system_columns(row: dict, ece) -> dict:
+    vals = {k: row.get(k) for k in COLUMNS}
+    for key in ("precision", "recall"):
+        per = [v[key] for v in row["per_class"].values() if v["support"] and v[key] is not None]
+        vals[f"macro_{key}"] = sum(per) / len(per) if per else None
+    vals["ece"] = ece
+    return vals
+
+
 def history_row(run: RunDir) -> dict:
     m = run.read_json("metrics")
     cfg = run.config()
+    ece = m["track_level"].get("jev_ece")
     return {
-        "date": dt.date.today().isoformat(), "run_id": run.run_id, "git_commit": m["git_commit"],
-        "git_dirty": m["git_dirty"], "config_hash": config_hash(cfg), "split": m["split"],
-        "clips": cfg["clips"][m["split"]], "max_frames_per_clip": cfg["run"].get("max_frames_per_clip"),
-        "n_box": m["n_box"], "thresholds": m["thresholds"],
-        "systems": {s: {k: row.get(k) for k in COLUMNS} for s, row in m["systems"].items()},
+        "date": dt.date.today().isoformat(), "run_id": run.run_id, "git_commit": run.git().get("commit"),
+        "git_dirty": run.git().get("dirty"), "config_hash": config_hash(cfg), "split": m["split"],
+        "videos": run.file("videos").read_text().split(), "max_videos": cfg["run"].get("max_videos"),
+        "max_frames_per_video": cfg["run"].get("max_frames_per_video"),
+        "n_box": m["n"]["boxes_scored"], "n_track": m["n"]["tracks"], "thresholds": m["thresholds"],
+        "systems": {s: system_columns(row, ece if s == "jev" else None) for s, row in m["systems"].items()},
     }
 
 
@@ -60,11 +71,11 @@ def main() -> None:
 
     run = RunDir(args.run_dir)
     new = history_row(run)
-    if new["split"] != "dev" or new["max_frames_per_clip"]:
+    if new["split"] != "dev" or new["max_videos"] or new["max_frames_per_video"]:
         sys.exit("regression history only takes full dev runs")
     tol = run.config()["metrics"]["regression_tol"]
     rows = [json.loads(line) for line in args.history.open()] if args.history.exists() else []
-    comparable = [r for r in rows if r["clips"] == new["clips"] and not r.get("max_frames_per_clip")]
+    comparable = [r for r in rows if r.get("videos") == new["videos"]]
     old = comparable[-1] if comparable else None
 
     print(f"{'system':10s} " + " ".join(f"{c:>18s}" for c in COLUMNS))

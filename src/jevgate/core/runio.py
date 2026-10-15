@@ -1,33 +1,48 @@
-"""Run folders: naming (runs/<YYMMDD>_<name>) and the fixed file layout of one run.
+"""Run folders: naming (runs/<YYMMDD>_<name>) and the fixed layout of one run (PLAN.md §7).
 
 runs/<run_id>/
-├── README.md         report (results, n flow, time and cost, what each figure shows)
-├── run.yaml          config + git + env + thresholds + stage times + usage
-├── frames.jsonl      one row per frame
-├── boxes.jsonl       one row per candidate box: position, (detector), truth y, Jev evidence
-├── judgments.jsonl   one row per box: every system's call
-├── metrics.json      every number, plus curve data for the figures
-├── errors.csv        boxes a main system got wrong
-├── cache/            expensive judge outputs (vlm.jsonl, jev.jsonl, jev_responses.jsonl, vlm_prompt.txt)
-├── figures/          fig1..fig4 (+ appendix/ when enabled)
-└── viz/              sampled frames: one folder per view (gt, [dino], vlm, jev, gate) + compare/
+├── README.md, run.yaml
+├── data/                 symlinks: images, annotations, video_split.yaml
+├── yolo/{input,output}/  weights.pt + tracker.yaml (links), videos.txt | detections.jsonl, tracks.jsonl
+├── jev/{input,output}/   requests.jsonl | responses.jsonl, decisions.jsonl
+├── vlm/{input,output}/   prompts.jsonl, images/ | decisions.jsonl
+└── evaluation/           labels/, judgments.jsonl, tables/, confusion/, plots/, viz/, videos/
 """
 
 import datetime as dt
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import yaml
 
 FILES = {
-    "frames": "frames.jsonl",
-    "boxes": "boxes.jsonl",
-    "judgments": "judgments.jsonl",
-    "metrics": "metrics.json",
-    "errors": "errors.csv",
-    "report": "README.md",
+    "readme": "README.md",
     "meta": "run.yaml",
+    "videos": "yolo/input/videos.txt",
+    "detections": "yolo/output/detections.jsonl",
+    "tracks": "yolo/output/tracks.jsonl",
+    "jev_requests": "jev/input/requests.jsonl",
+    "jev_responses": "jev/output/responses.jsonl",
+    "jev": "jev/output/decisions.jsonl",
+    "vlm_prompts": "vlm/input/prompts.jsonl",
+    "vlm": "vlm/output/decisions.jsonl",
+    "box_labels": "evaluation/labels/boxes.jsonl",
+    "track_labels": "evaluation/labels/tracks.jsonl",
+    "judgments": "evaluation/judgments.jsonl",
+    "metrics": "evaluation/tables/metrics.json",
+    "metrics_md": "evaluation/tables/metrics.md",
+    "errors": "evaluation/tables/errors.csv",
+    "thresholds": "evaluation/tables/thresholds.yaml",
+    "endpoints": "evaluation/tables/endpoints.json",
+}
+DIRS = {
+    "vlm_images": "vlm/input/images",
+    "confusion": "evaluation/confusion",
+    "plots": "evaluation/plots",
+    "viz": "evaluation/viz",
+    "videos": "evaluation/videos",
 }
 
 
@@ -58,11 +73,8 @@ def git_info(repo: Path) -> dict:
             return None
 
     status = run("status", "--porcelain", "--untracked-files=no")
-    return {
-        "commit": run("rev-parse", "--short", "HEAD"),
-        "branch": run("rev-parse", "--abbrev-ref", "HEAD"),
-        "dirty": bool(status) if status is not None else None,
-    }
+    return {"commit": run("rev-parse", "--short", "HEAD"), "branch": run("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": bool(status) if status is not None else None}
 
 
 def next_run_dir(out_root: Path, name: str, today: dt.date | None = None) -> Path:
@@ -74,6 +86,14 @@ def next_run_dir(out_root: Path, name: str, today: dt.date | None = None) -> Pat
     return candidate
 
 
+def link(target: Path, at: Path) -> None:
+    """Symlink `at` -> `target` (absolute), replacing an existing link."""
+    at.parent.mkdir(parents=True, exist_ok=True)
+    if at.is_symlink() or at.exists():
+        at.unlink()
+    os.symlink(Path(target).resolve(), at)
+
+
 class RunDir:
     """One experiment run on disk. Stages read and write only through this object."""
 
@@ -82,25 +102,29 @@ class RunDir:
 
     @classmethod
     def create(cls, cfg: dict, repo: Path) -> "RunDir":
-        """Make a fresh run folder and start run.yaml with the resolved config and git provenance."""
+        """Fresh run folder: run.yaml (config + git), data/ links and the yolo/input links."""
         path = next_run_dir(repo / cfg["run"]["out_root"], cfg["run"]["name"])
         path.mkdir(parents=True)
         run = cls(path)
         git = git_info(repo) | {"time": dt.datetime.now().isoformat(timespec="seconds")}
         run.update_meta({"run_id": path.name, "git": git, "config": cfg})
+        data_root = repo / cfg["data"]["root"]
+        link(data_root / cfg["data"]["images_dir"], path / "data" / "images")
+        link(data_root / cfg["data"]["annotations_dir"], path / "data" / "annotations")
+        link(repo / cfg["video_split"]["file"], path / "data" / "video_split.yaml")
+        link(repo / cfg["track"]["weights"], path / "yolo" / "input" / "weights.pt")
         return run
 
     @property
     def run_id(self) -> str:
         return self.path.name
 
-    # run.yaml -----------------------------------------------------------------------------
     def meta(self) -> dict:
         p = self.file("meta")
         return yaml.safe_load(p.read_text()) if p.exists() else {}
 
     def update_meta(self, updates: dict) -> None:
-        """Merge top-level sections into run.yaml (dict sections merge one level deep)."""
+        """Merge top-level sections into run.yaml (dict sections merge one level deep, config replaces)."""
         meta = self.meta()
         for key, value in updates.items():
             if isinstance(value, dict) and isinstance(meta.get(key), dict) and key != "config":
@@ -115,12 +139,18 @@ class RunDir:
     def git(self) -> dict:
         return self.meta().get("git", {})
 
-    # files --------------------------------------------------------------------------------
     def file(self, name: str) -> Path:
-        return self.path / FILES[name]
+        p = self.path / FILES[name]
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
 
-    def cache_file(self, name: str) -> Path:
-        return self.path / "cache" / name
+    def dir(self, name: str) -> Path:
+        p = self.path / DIRS[name]
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def exists(self, name: str) -> bool:
+        return (self.path / FILES[name]).exists()
 
     def write(self, name: str, rows) -> int:
         return write_jsonl(self.file(name), rows)
@@ -133,11 +163,3 @@ class RunDir:
 
     def read_json(self, name: str):
         return json.loads(self.file(name).read_text())
-
-    def system_rows(self) -> dict[str, list[dict]]:
-        """judgments.jsonl as {system: [row per box in box order]} (cand_id included in each row)."""
-        out: dict[str, list[dict]] = {}
-        for j in self.read("judgments"):
-            for system, row in j["systems"].items():
-                out.setdefault(system, []).append({"cand_id": j["cand_id"], **row})
-        return out
