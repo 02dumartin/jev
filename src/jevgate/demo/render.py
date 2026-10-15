@@ -183,17 +183,18 @@ class Dashboard:
         x0, y0, x1, y1 = box
         right, total = None, None
         if dec is not None:
-            right = f"Jev only (description {state['vlm_s']:.1f} s not included)"
+            right = "Jev only"
             total = dec["latency_ms"] / 1000
         y = self.panel(d, box, "VLM + Jev  ·  the VLM describes, Jev answers all in one request", right, total)
         if dec is None:
             d.text((x0 + 18, y), "waiting for the description …", font=self.f["b"], fill=self.c["muted"])
             self.badge(d, x0 + 18, y1 - 72, x1 - x0 - 36, None)
             return
+        note = f"Time = Jev only; the VLM description ({state['vlm_s']:.1f} s, left) is not included."
         if single:
-            n_q = len(dec["cards"])
-            d.text((x0 + 18, y - 10), f"asked one by one instead: {n_q} requests, {single['tokens']} tokens "
-                   f"(vs {sum(dec['usage'].values())} tokens in one request)", font=self.f["s"], fill=self.c["muted"])
+            note += (f"   Asked one by one instead: {len(dec['cards'])} requests, {single['tokens']} tokens "
+                     f"(vs {sum(dec['usage'].values())} in one request).")
+        d.text((x0 + 18, y - 10), note, font=self.f["s"], fill=self.c["muted"])
         cols, gap = 3, 14
         cw = (x1 - x0 - 36 - gap * (cols - 1)) / cols
         ch = (y1 - 72 - 16 - (y + 16) - gap) / 2
