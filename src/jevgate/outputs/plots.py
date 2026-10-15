@@ -14,13 +14,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
+from jevgate.outputs.colors import class_colors  # noqa: E402
+
 TITLES = {"yolo": "① YOLO (per frame)", "track_vote": "② track majority", "vlm_all": "③ VLM on every track",
           "jev": "④ Jev", "gate": "⑤ Jev gate → VLM"}
 SCORES = {"jev_p_ok": ("Jev p_ok", "#4C78A8", "-"), "vlm_p_yes": ("VLM p_yes", "#E45756", "--"),
           "mean_conf": ("YOLO mean conf", "#888888", ":")}
 
 
-def confusion(path: Path, system: str, conf: dict) -> None:
+def confusion(path: Path, system: str, conf: dict, colors: dict[str, str]) -> None:
     classes, cm = conf["classes"], np.asarray(conf["matrix"], dtype=float)
     rows = cm.sum(1, keepdims=True)
     norm = np.divide(cm, rows, out=np.zeros_like(cm), where=rows > 0)
@@ -34,6 +36,8 @@ def confusion(path: Path, system: str, conf: dict) -> None:
     ax.set_xticks(range(len(classes)), classes, rotation=40, ha="right", fontsize=8)
     ax.set_yticks(range(len(classes)), [f"{c} (n={int(r)})" for c, r in zip(classes, rows[:, 0], strict=True)],
                   fontsize=8)
+    for tick in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
+        tick.set_color(colors[tick.get_text().split(" (")[0]])
     ax.set(xlabel="predicted", ylabel="truth (box)", title=TITLES.get(system, system))
     fig.tight_layout()
     fig.savefig(path, dpi=150)
@@ -112,7 +116,7 @@ def operating_points(metrics: dict, curves: dict, run_data) -> dict:
 
 def all_figures(run, metrics: dict, curves: dict, run_data) -> None:
     for system, conf in curves.get("confusion", {}).items():
-        confusion(run.dir("confusion") / f"{system}.png", system, conf)
+        confusion(run.dir("confusion") / f"{system}.png", system, conf, class_colors(run.config()))
     tl = metrics["track_level"]
     plots = run.dir("plots")
     if curves.get("roc"):

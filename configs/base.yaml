@@ -131,6 +131,15 @@ viz:
   enabled: true
   videos: true
   video_panels: [gt, gate]          # left | right of evaluation/videos/<video>.mp4 (gt or any system)
+  # One colour per label (RGB hex), used by every overlay image, video and figure. Box style shows correctness.
+  class_colors:
+    fish: "#FF8C1A"
+    small_fish: "#FFE135"
+    crab: "#E8384F"
+    shrimp: "#D35BFF"
+    jellyfish: "#3CC8FF"
+    starfish: "#4ED36B"
+    background: "#9A9A9A"
   sample_frames: 12
   seed: 0
 

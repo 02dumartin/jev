@@ -35,3 +35,10 @@ def test_rejects_bad_settings():
 
 def test_output_classes_end_with_background(cfg):
     assert output_classes(cfg)[-1] == "background" and len(output_classes(cfg)) == 7
+
+
+def test_every_label_has_a_colour(cfg):
+    from jevgate.outputs.colors import class_colors_bgr
+
+    colours = class_colors_bgr(cfg)
+    assert list(colours) == output_classes(cfg) and len(set(colours.values())) == len(colours)
