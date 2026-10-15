@@ -49,13 +49,16 @@ def took_product(events: list[dict]) -> bool:
     return sum(e["label"] == "take" for e in events) > sum(e["label"] == "put" for e in events)
 
 
-def pick_for_video(rows: list[dict], n: int, seed: int, include: list[str] = (), exclude: list[str] = ()) -> list[dict]:
+def pick_for_video(rows: list[dict], n: int, seed: int, include: list[str] = (), exclude: list[str] = (),
+                   fill_others: bool = True) -> list[dict]:
     """`include` clips first (in the given order), then round-robin over action badges for variety; `exclude` never."""
     by_id = {r["sample_id"]: r for r in rows}
     missing = [s for s in include if s not in by_id]
     if missing:
         raise ValueError(f"render.include clips not in this run: {missing}")
-    out = [by_id[s] for s in include if s not in exclude]
+    out = [by_id[s] for s in include if s not in exclude][:n]
+    if not fill_others:
+        return out
     groups = defaultdict(list)
     for r in rows:
         if r["sample_id"] not in exclude and r["sample_id"] not in include:
@@ -216,7 +219,8 @@ class DemoRun:
 
         rows = [m | {"action": decs[m["sample_id"]]["action"]} for m in metas]
         r = self.cfg["render"]
-        chosen = pick_for_video(rows, r["clips_in_video"], r["seed"], r.get("include", []), r.get("exclude", []))
+        chosen = pick_for_video(rows, r["clips_in_video"], r["seed"], r.get("include", []), r.get("exclude", []),
+                                r.get("fill_others", True))
         dash = Dashboard(self.cfg, self.repo)
         path = self.p("evaluation/dashboard.mp4")
         writer = h264_writer(path, dash.W, dash.H, self.cfg["render"]["fps"])

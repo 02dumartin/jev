@@ -103,10 +103,10 @@ actions:
       restock_check: {badge: "RESTOCK CHECK", color: "#E8384F"}
 
 render:
-  clips_in_video: 24              # dashboard video: this many clips; `include` first (in order), the rest for variety
-  include: ["000457", "000368", "000436", "002429", "002198", "002491", "000421", "000134", "000951", "000953",
-            "001283"]
-  exclude: ["001246", "000217", "001797"]
+  clips_in_video: 24              # dashboard video: at most this many clips; `include` first (in order)
+  include: ["001404", "002429", "002491", "000421", "000134", "000951", "000953"]
+  exclude: ["001246", "000217", "001797", "000457", "000368", "000436", "002198", "001283", "000701", "000458"]
+  fill_others: false              # true: top up to clips_in_video with other clips, chosen for variety
   seed: 0
   fps: 6                          # the clips' own frame rate
   hold_s: 3.0                     # freeze on the last frame with the full decision
