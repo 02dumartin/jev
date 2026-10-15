@@ -117,6 +117,11 @@ def output_classes(cfg: dict) -> list[str]:
     return class_names(cfg) + [BACKGROUND]
 
 
+def load_plain_config(path: str | Path, overrides: list[str] | None = None) -> dict:
+    """Load a config (following `inherit`) and apply overrides, without the Brackish experiment validation."""
+    return deep_merge(_load_with_inherit(Path(path)), parse_overrides(overrides or []))
+
+
 def load_config(path: str | Path, overrides: list[str] | None = None) -> dict:
     """Load a config file (following `inherit`), apply overrides, validate, and return it."""
     cfg = deep_merge(_load_with_inherit(Path(path)), parse_overrides(overrides or []))

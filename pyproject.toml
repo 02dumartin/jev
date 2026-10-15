@@ -21,6 +21,7 @@ dependencies = [
     "ultralytics>=8.4.177",
     "lap>=0.5.12",
     "imageio-ffmpeg>=0.5",
+    "ijson>=3.6.0",
 ]
 
 [dependency-groups]
