@@ -78,7 +78,7 @@ class Dashboard:
         d.text((x0 + 18, y0 + 12), title, font=self.f["h"], fill=self.c["title"])
         edge = x1 - 18
         if total_s is not None:
-            text = f"Total {total_s:.1f} s"
+            text = f"Time {total_s:.1f} s" if total_s >= 1 else f"Time {total_s:.2f} s"
             tw = d.textlength(text, font=self.f["total"])
             bx0 = edge - tw - 28
             d.rounded_rectangle([bx0, y0 + 8, edge, y0 + 54], 10, fill=self.c["panel"], outline=self.c["total"],
@@ -183,8 +183,8 @@ class Dashboard:
         x0, y0, x1, y1 = box
         right, total = None, None
         if dec is not None:
-            right = f"VLM {state['vlm_s']:.1f} s + Jev {dec['latency_ms'] / 1000:.2f} s"
-            total = state["vlm_s"] + dec["latency_ms"] / 1000
+            right = f"Jev only (description {state['vlm_s']:.1f} s not included)"
+            total = dec["latency_ms"] / 1000
         y = self.panel(d, box, "VLM + Jev  ·  the VLM describes, Jev answers all in one request", right, total)
         if dec is None:
             d.text((x0 + 18, y), "waiting for the description …", font=self.f["b"], fill=self.c["muted"])
