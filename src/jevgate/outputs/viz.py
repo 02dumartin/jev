@@ -1,7 +1,8 @@
-"""evaluation/viz/ (sample frames) and evaluation/videos/ (one mp4 per video).
+"""evaluation/viz/ (sample frames) and evaluation/videos/ (one mp4 per video: GT | Jev gate -> VLM).
 
 Colours (BGR): green = right class, yellow = animal with the wrong class, red = kept but no animal,
-orange dashed = an animal the system dropped, grey thin = dropped and indeed no animal.
+orange = an animal the system dropped, grey thin = dropped and indeed no animal, cyan = GT box.
+Gate boxes carry who decided their track: [Jev] or [VLM]; [untracked] boxes never reach a judge.
 """
 
 from collections import defaultdict
@@ -14,6 +15,7 @@ from jevgate.core.config import BACKGROUND
 from jevgate.data.brackish import image_path
 
 GREEN, YELLOW, RED, ORANGE, GREY = (80, 200, 80), (0, 210, 240), (60, 60, 230), (0, 140, 255), (140, 140, 140)
+CYAN = (230, 220, 60)
 PANELS = [("yolo", "1 YOLO per frame"), ("track_vote", "2 track majority"),
           ("vlm_all", "3 VLM on every track"), ("gate", "5 Jev gate -> VLM")]
 
@@ -24,7 +26,18 @@ def _colour(pred: str, y: str | None):
     return ORANGE if y not in (BACKGROUND, None) else None
 
 
-def draw(img: np.ndarray, boxes: list[dict], preds: dict[str, str], ys: dict[str, str | None], gt=None) -> np.ndarray:
+def draw_gt(img: np.ndarray, gt_boxes) -> np.ndarray:
+    """GT boxes with their AAU class."""
+    for g in gt_boxes:
+        x1, y1, x2, y2 = (int(round(v)) for v in g.box_xyxy)
+        cv2.rectangle(img, (x1, y1), (x2, y2), CYAN, 2)
+        cv2.putText(img, g.label, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, CYAN, 1, cv2.LINE_AA)
+    return img
+
+
+def draw(img: np.ndarray, boxes: list[dict], preds: dict[str, str], ys: dict[str, str | None], gt=None,
+         route: dict[str, str] | None = None) -> np.ndarray:
+    """System boxes coloured by correctness; `route` (track_uid -> jev | vlm) adds who decided each box."""
     for g in gt or []:
         x1, y1, x2, y2 = (int(round(v)) for v in g.box_xyxy)
         cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 1)
@@ -36,9 +49,12 @@ def draw(img: np.ndarray, boxes: list[dict], preds: dict[str, str], ys: dict[str
             cv2.rectangle(img, (x1, y1), (x2, y2), GREY, 1)
             continue
         cv2.rectangle(img, (x1, y1), (x2, y2), colour, 2 if pred != BACKGROUND else 1)
-        if pred != BACKGROUND:
-            tag = f"{pred} {b['conf']:.2f}" + (f" #{b['track_uid'].split('#')[1]}" if b["track_uid"] else "")
-            cv2.putText(img, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, colour, 1, cv2.LINE_AA)
+        tag = f"{pred} {b['conf']:.2f}" + (f" #{b['track_uid'].split('#')[1]}" if b["track_uid"] else "")
+        if route is not None:
+            tag += f" [{route[b['track_uid']].upper() if b['track_uid'] else 'untracked'}]".replace("JEV", "Jev")
+        if pred == BACKGROUND:
+            tag = f"dropped: {y}" + (tag[tag.index(" ["):] if route is not None else "")
+        cv2.putText(img, tag, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, colour, 1, cv2.LINE_AA)
     return img
 
 
@@ -51,8 +67,9 @@ def caption(img: np.ndarray, text: str) -> np.ndarray:
 class Renderer:
     """Indexes boxes per frame once; draws sample sheets and videos."""
 
-    def __init__(self, cfg: dict, frames: list[dict], detections: list[dict], judgments: list[dict], gt):
-        self.cfg, self.frames, self.gt = cfg, frames, gt
+    def __init__(self, cfg: dict, frames: list[dict], detections: list[dict], judgments: list[dict], gt,
+                 gate_route: dict[str, str] | None = None):
+        self.cfg, self.frames, self.gt, self.gate_route = cfg, frames, gt, gate_route
         self.by_frame = defaultdict(list)
         for d in detections:
             self.by_frame[d["file"]].append(d)
@@ -61,9 +78,15 @@ class Renderer:
         self.ys = {j["box_id"]: j["y"] for j in judgments}
 
     def panel(self, f: dict, system: str, title: str) -> np.ndarray:
+        """One frame drawn for `system`; system 'gt' shows the AAU boxes only."""
         img = cv2.imread(str(image_path(self.cfg, f["file"])))
-        img = draw(img, self.by_frame[f["file"]], self.preds[system], self.ys, self.gt.frame_boxes(f["file"]))
-        return caption(img, f"{title}   {f['file']}")
+        gt_boxes = self.gt.frame_boxes(f["file"])
+        if system == "gt":
+            return caption(draw_gt(img, gt_boxes), f"GT (AAU): {len(gt_boxes)} animals   {f['file']}")
+        route = self.gate_route if system == "gate" else None
+        img = draw(img, self.by_frame[f["file"]], self.preds[system], self.ys, gt_boxes, route)
+        shown = sum(self.preds[system][b["box_id"]] != BACKGROUND for b in self.by_frame[f["file"]])
+        return caption(img, f"{title}: {shown} kept   green ok / yellow wrong class / red no animal / orange dropped")
 
     def samples(self, out: Path, n: int, seed: int) -> None:
         picks = np.random.default_rng(seed).choice(len(self.frames), size=min(n, len(self.frames)), replace=False)
@@ -78,7 +101,7 @@ class Renderer:
 
     def video(self, out: Path, video: str, left: str, right: str, fps: int) -> Path:
         """Left: system `left`, right: system `right`, frame by frame (H.264 mp4: plays in VS Code and PPT)."""
-        titles = dict(PANELS)
+        titles = dict(PANELS) | {"gt": "GT"}
         path, writer = out / f"{video}.mp4", None
         for f in (f for f in self.frames if f["video"] == video):
             frame = np.hstack([self.panel(f, left, titles[left]), self.panel(f, right, titles[right])])

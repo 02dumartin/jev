@@ -130,6 +130,7 @@ endpoints:
 viz:
   enabled: true
   videos: true
+  video_panels: [gt, gate]          # left | right of evaluation/videos/<video>.mp4 (gt or any system)
   sample_frames: 12
   seed: 0
 

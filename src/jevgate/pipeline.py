@@ -203,6 +203,7 @@ class Pipeline:
         if cfg["run"]["split"] == "test":
             run.write_json("endpoints", {"primary": metrics["primary"], "endpoints": metrics["endpoints"]})
         if jev_rows and vlm_rows:
+            run.write("gate", data.gate_rows)
             report.write_errors(run.file("errors"), tracks, tl, data.jev, data.vlm, data.gate_rows)
         plots.all_figures(run, metrics, curves, data)
         self._time("evaluate_s", started)
@@ -214,11 +215,12 @@ class Pipeline:
         log("S5 evaluation written")
 
         if cfg["viz"]["enabled"]:
-            renderer = Renderer(cfg, frames, detections, judgments, gt)
+            route = {r["track_uid"]: r["routed_to"] for r in data.gate_rows} if jev_rows and vlm_rows else None
+            renderer = Renderer(cfg, frames, detections, judgments, gt, route)
             renderer.samples(run.dir("viz"), cfg["viz"]["sample_frames"], cfg["viz"]["seed"])
             if cfg["viz"]["videos"] and "gate" in self.systems:
                 for video in videos:
-                    renderer.video(run.dir("videos"), video, "yolo", "gate", cfg["track"]["fps"])
+                    renderer.video(run.dir("videos"), video, *cfg["viz"]["video_panels"], cfg["track"]["fps"])
             log("S6 viz written")
         return run
 

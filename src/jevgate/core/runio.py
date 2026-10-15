@@ -31,6 +31,7 @@ FILES = {
     "box_labels": "evaluation/labels/boxes.jsonl",
     "track_labels": "evaluation/labels/tracks.jsonl",
     "judgments": "evaluation/judgments.jsonl",
+    "gate": "evaluation/gate_decisions.jsonl",
     "metrics": "evaluation/tables/metrics.json",
     "metrics_md": "evaluation/tables/metrics.md",
     "errors": "evaluation/tables/errors.csv",
