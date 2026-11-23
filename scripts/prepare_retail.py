@@ -5,9 +5,9 @@ from pathlib import Path
 
 import cv2
 
-from jevgate.core.config import load_config
-from jevgate.core.runio import write_jsonl
-from jevgate.preprocess.metadata import build_meta
+from jev.core.config import load_config
+from jev.core.runio import write_jsonl
+from jev.preprocess.metadata import build_meta
 
 REPO = Path(__file__).resolve().parents[1]
 

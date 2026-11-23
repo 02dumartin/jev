@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from jevgate.core.runio import read_jsonl
-from jevgate.evaluation.metrics import binary_metrics, took_product
-from jevgate.pipeline import RetailRun, load_results
+from jev.core.runio import read_jsonl
+from jev.evaluation.metrics import binary_metrics, took_product
+from jev.pipeline import RetailRun, load_results
 
 
 def evaluate_run(run_dir: Path, output: Path, bins: int = 10) -> dict:

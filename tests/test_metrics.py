@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from jevgate.evaluation.metrics import binary_metrics, took_product
+from jev.evaluation.metrics import binary_metrics, took_product
 
 
 def test_known_calibration_values():

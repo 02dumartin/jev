@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from jevgate.evaluation.report import evaluate_run
+from jev.evaluation.report import evaluate_run
 
 REPO = Path(__file__).resolve().parents[1]
 

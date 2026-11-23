@@ -3,8 +3,8 @@
 import argparse
 from pathlib import Path
 
-from jevgate.core.config import load_config
-from jevgate.pipeline import rerender
+from jev.core.config import load_config
+from jev.pipeline import rerender
 
 REPO = Path(__file__).resolve().parents[1]
 

@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from jevgate.preprocess.frames import active_events, mark_events, sample_indices
+from jev.preprocess.frames import active_events, mark_events, sample_indices
 
 
 def events_sentence(events: list[dict], idx: list[int]) -> str:
@@ -74,7 +74,7 @@ class Observer:
     @torch.inference_mode()
     def answer(self, frames: list[np.ndarray], events: list[dict]) -> dict:
         """VLM-only path: the same frames, the configured questions answered directly as JSON (no probabilities)."""
-        from jevgate.decision.policy import option_values
+        from jev.decision.policy import option_values
 
         imgs, _, idx = self.inputs_for(frames, events)
         qs = "\n".join(

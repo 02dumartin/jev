@@ -6,7 +6,7 @@ import time
 
 import httpx
 
-from jevgate.models.budget import Budget
+from jev.models.budget import Budget
 
 RETRY_STATUS = {408, 429, 499, 529}
 

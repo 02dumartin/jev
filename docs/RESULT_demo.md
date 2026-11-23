@@ -160,6 +160,6 @@ uv run python scripts/run_retail.py --set run.name=retail-demo-v2 reuse_states_f
 uv run python scripts/render_retail.py --run-dir runs/261015_retail-demo-v2   # 영상만 다시 그리기
 ```
 - 설정: `configs/retail.yaml` (질문, 행동 규칙, 화면, 포함·제외 클립)
-- 코드: `src/jevgate/` (meta, clip, observe, decide, render, pipeline)
+- 코드: `src/jev/` (meta, clip, observe, decide, render, pipeline)
 - 입출력 원본: `runs/261015_retail-demo-v2/{vlm,vlm_only,jev,actions}/`
 - 장면 설명은 `runs/261015_retail-demo`에서 만든 것을 재사용했다 (같은 모델, 같은 프레임, 같은 프롬프트).

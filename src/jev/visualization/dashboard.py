@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from jevgate.preprocess.frames import active_events, mark_events
+from jev.preprocess.frames import active_events, mark_events
 
 EVENT_COLORS = {"take": "#FF8C1A", "put": "#3CA0DC", "touch": "#B05CE0"}
 TYPE_NAMES = {"noul": "Boolean", "choice": "Choice", "score": "Score"}

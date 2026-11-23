@@ -25,11 +25,11 @@ import yaml
 from dotenv import load_dotenv
 from PIL import Image
 
-from jevgate.core.runio import git_info, link, next_run_dir, read_jsonl, write_jsonl
-from jevgate.decision.policy import Decider, action, vlm_cards
-from jevgate.evaluation.metrics import took_product
-from jevgate.models.budget import Budget
-from jevgate.preprocess.frames import read_frames
+from jev.core.runio import git_info, link, next_run_dir, read_jsonl, write_jsonl
+from jev.decision.policy import Decider, action, vlm_cards
+from jev.evaluation.metrics import took_product
+from jev.models.budget import Budget
+from jev.preprocess.frames import read_frames
 
 
 def log(msg: str) -> None:
@@ -100,7 +100,7 @@ class RetailRun:
         need_answers = self.cfg["vlm_only"]["enabled"]
         answers, prompts, answer_prompts = {}, [], []
         if not reuse or need_answers:
-            from jevgate.models.observer import Observer
+            from jev.models.observer import Observer
 
             vlm = Observer(self.cfg)
             for k, m in enumerate(metas, 1):
@@ -239,8 +239,8 @@ class RetailRun:
         }
 
     def render(self, metas, states, decs) -> Path:
-        from jevgate.visualization.dashboard import Dashboard, render_clip
-        from jevgate.visualization.video import h264_writer
+        from jev.visualization.dashboard import Dashboard, render_clip
+        from jev.visualization.video import h264_writer
 
         rows = [m | {"action": decs[m["sample_id"]]["action"]} for m in metas]
         r = self.cfg["render"]
@@ -280,7 +280,7 @@ class RetailRun:
         summ = self.summary(metas, states, decs)
         (self.p("evaluation/summary.json")).write_text(json.dumps(summ, indent=2))
         log(f"summary: {summ}")
-        from jevgate.evaluation.report import evaluate_run
+        from jev.evaluation.report import evaluate_run
 
         evaluate_run(self.path, self.path / "evaluation/calibration")
         video = self.render(metas, states, decs)

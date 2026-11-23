@@ -3,7 +3,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from jevgate.models.jev import JevClient, JevError, validate_noul
+from jev.models.jev import JevClient, JevError, validate_noul
 
 
 def question_body(q: dict) -> dict:

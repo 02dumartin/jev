@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jevgate.core.config import load_config
-from jevgate.core.runio import write_jsonl
-from jevgate.decision.policy import vlm_cards
-from jevgate.evaluation.report import evaluate_run
+from jev.core.config import load_config
+from jev.core.runio import write_jsonl
+from jev.decision.policy import vlm_cards
+from jev.evaluation.report import evaluate_run
 
 REPO = Path(__file__).resolve().parents[1]
 

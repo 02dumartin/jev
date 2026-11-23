@@ -2,7 +2,7 @@
 
 참고 구조: [tomato-robot/src](https://github.com/NVA-KIST/tomato-robot/tree/main/src),
 [TomatoVision3D](https://github.com/NVA-KIST/TomatoVision3D)의 실행 스크립트 / 기능별 모듈 분리.
-패키지 import는 `jevgate`로 유지하고 모든 실행 명령은 저장소 루트에서 수행한다.
+패키지 import는 `jev`를 사용하고 모든 실행 명령은 저장소 루트에서 수행한다.
 
 | 실행 파일 | 역할 | 핵심 모듈 |
 |---|---|---|
@@ -11,7 +11,7 @@
 | `scripts/evaluate_retail.py` | 저장된 결과로 지표·calibration·보고서 재계산 | `evaluation/metrics.py`, `evaluation/report.py` |
 | `scripts/render_retail.py` | 저장된 결과로 영상만 재생성 | `visualization/dashboard.py`, `visualization/video.py` |
 
-`src/jevgate/` 아래 나머지 구성:
+`src/jev/` 아래 나머지 구성:
 
 - `models/observer.py`: Qwen VLM 장면 관찰 및 VLM-only 비교 경로.
 - `models/jev.py`, `models/budget.py`: Jev HTTP 클라이언트와 요청 예산.

@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from jevgate.core.config import ConfigError, load_config
-from jevgate.decision.policy import action, card, request, vlm_cards
-from jevgate.models.budget import Budget, BudgetExceeded
-from jevgate.models.jev import JevError, validate_noul
-from jevgate.pipeline import pick_for_video
-from jevgate.preprocess.metadata import rotate_point, upright_rotation
+from jev.core.config import ConfigError, load_config
+from jev.decision.policy import action, card, request, vlm_cards
+from jev.models.budget import Budget, BudgetExceeded
+from jev.models.jev import JevError, validate_noul
+from jev.pipeline import pick_for_video
+from jev.preprocess.metadata import rotate_point, upright_rotation
 
 REPO = Path(__file__).resolve().parents[1]
 
