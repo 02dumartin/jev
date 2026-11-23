@@ -1,0 +1,2 @@
+This Dataset is licensed under the Standard.AI Dataset License, Copyright © Standard Corp.  All Rights Reserved.
+Source: RetailAction (Standard Cognition), mirrored at huggingface.co/datasets/Voxel51/RetailAction.

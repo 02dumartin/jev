@@ -1,0 +1,48 @@
+{
+  "clips": 188,
+  "questions_per_clip": 6,
+  "vlm_s_median": 2.762,
+  "jev_multi_ms_median": 278.5,
+  "jev_multi_ms_p90": 361.49,
+  "jev_single_wall_ms_median": 389.4,
+  "requests_per_clip": {
+    "multi": 1,
+    "single": 6
+  },
+  "tokens_per_clip_median": {
+    "multi": 873.0,
+    "single": 2941.0
+  },
+  "sure_rate_per_question": {
+    "Shopper needs help?": 1.0,
+    "Product taken?": 0.75,
+    "Fridge door open?": 0.888,
+    "Crowding": 0.995,
+    "Shopper activity": 0.771,
+    "Staff action": 0.059
+  },
+  "actions": {
+    "MANAGER CHECK": 83,
+    "NO ACTION": 57,
+    "CLOSE FRIDGE": 23,
+    "OFFER HELP": 15,
+    "KEEP WATCHING": 9,
+    "RESTOCK CHECK": 1
+  },
+  "product_taken_agrees_with_annotation": 0.878,
+  "rotated_clips": 139,
+  "clips_without_pose_axis": 8,
+  "unparsed_states": 0,
+  "jev_models": [
+    "jev-1.13.0"
+  ],
+  "vlm_only": {
+    "vlm_s_median": 1.501,
+    "invalid_answers": 0,
+    "actions": {
+      "NO ACTION": 173,
+      "CLOSE FRIDGE": 15
+    },
+    "same_action_as_jev_path": 0.362
+  }
+}

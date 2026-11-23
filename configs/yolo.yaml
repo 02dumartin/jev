@@ -1,2 +1,0 @@
-# YOLO12s training on the video-level split (train/yolo12s_video). All settings live in base.yaml (yolo:).
-inherit: base.yaml

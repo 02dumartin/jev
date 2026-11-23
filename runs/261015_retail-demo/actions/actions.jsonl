@@ -1,0 +1,188 @@
+{"sample_id": "001054", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "001719", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.57}
+{"sample_id": "000550", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.36}
+{"sample_id": "000732", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.67}
+{"sample_id": "000852", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "001229", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.48}
+{"sample_id": "000368", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "001533", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.42}
+{"sample_id": "001619", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.57}
+{"sample_id": "000985", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002081", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.54}
+{"sample_id": "001927", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.43}
+{"sample_id": "001195", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.47}
+{"sample_id": "000643", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.5}
+{"sample_id": "000420", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "001181", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.58}
+{"sample_id": "001895", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.51}
+{"sample_id": "001900", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.53}
+{"sample_id": "000861", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.34}
+{"sample_id": "000095", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.53}
+{"sample_id": "001314", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.63}
+{"sample_id": "000574", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.4}
+{"sample_id": "000345", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.51}
+{"sample_id": "001866", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.68}
+{"sample_id": "002016", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.61}
+{"sample_id": "001220", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.52}
+{"sample_id": "001166", "badge": "RESTOCK CHECK", "color": "#E8384F", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.47}
+{"sample_id": "002201", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "000558", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.68}
+{"sample_id": "001246", "badge": "TIDY SHELF", "color": "#D35BFF", "rule": {"from_choice": "staff_action"}, "sure": true, "p": 0.92}
+{"sample_id": "000951", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.4}
+{"sample_id": "002261", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.4}
+{"sample_id": "001591", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.4}
+{"sample_id": "000038", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.62}
+{"sample_id": "000953", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"needs_help": ">=0.75"}, "sure": true}
+{"sample_id": "001808", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": true, "p": 0.8}
+{"sample_id": "002491", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.36}
+{"sample_id": "001207", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.35}
+{"sample_id": "000992", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.35}
+{"sample_id": "000043", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.5}
+{"sample_id": "001881", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.43}
+{"sample_id": "001946", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.57}
+{"sample_id": "000737", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "000421", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "000075", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.44}
+{"sample_id": "000817", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "001830", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.43}
+{"sample_id": "001708", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.44}
+{"sample_id": "000198", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.5}
+{"sample_id": "001578", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.4}
+{"sample_id": "001558", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "001391", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": true, "p": 0.78}
+{"sample_id": "000541", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "000680", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.47}
+{"sample_id": "000549", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.59}
+{"sample_id": "002106", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.36}
+{"sample_id": "000461", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "001943", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.58}
+{"sample_id": "000634", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.59}
+{"sample_id": "000433", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.63}
+{"sample_id": "001498", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.6}
+{"sample_id": "001853", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": true, "p": 0.82}
+{"sample_id": "000134", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.43}
+{"sample_id": "001703", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.72}
+{"sample_id": "001496", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.41}
+{"sample_id": "000845", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.42}
+{"sample_id": "000608", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.47}
+{"sample_id": "000047", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.34}
+{"sample_id": "000776", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001212", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.41}
+{"sample_id": "001490", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "002358", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "002449", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "000667", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "000434", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.35}
+{"sample_id": "002245", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.37}
+{"sample_id": "002288", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.36}
+{"sample_id": "001876", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.38}
+{"sample_id": "001135", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "001663", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.41}
+{"sample_id": "001444", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.53}
+{"sample_id": "000218", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.41}
+{"sample_id": "000458", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.35}
+{"sample_id": "001712", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.47}
+{"sample_id": "000217", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.37}
+{"sample_id": "000681", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "000184", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.46}
+{"sample_id": "001773", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.65}
+{"sample_id": "000179", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.53}
+{"sample_id": "001821", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.41}
+{"sample_id": "002219", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002500", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.59}
+{"sample_id": "001255", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.32}
+{"sample_id": "000886", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002442", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.39}
+{"sample_id": "001978", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "000236", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002178", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.37}
+{"sample_id": "000516", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.44}
+{"sample_id": "000959", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.37}
+{"sample_id": "001277", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "000893", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.67}
+{"sample_id": "002185", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.55}
+{"sample_id": "000672", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.47}
+{"sample_id": "000536", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.49}
+{"sample_id": "001018", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.48}
+{"sample_id": "000880", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.58}
+{"sample_id": "002088", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.48}
+{"sample_id": "000046", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.37}
+{"sample_id": "001401", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001949", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001892", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.46}
+{"sample_id": "002205", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "001309", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.63}
+{"sample_id": "000338", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "001437", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001248", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.43}
+{"sample_id": "002327", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.37}
+{"sample_id": "001197", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.73}
+{"sample_id": "001351", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.41}
+{"sample_id": "000108", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.63}
+{"sample_id": "000701", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002163", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.38}
+{"sample_id": "001797", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "001139", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.46}
+{"sample_id": "000683", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.44}
+{"sample_id": "002298", "badge": "OFFER HELP", "color": "#FF8C1A", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.49}
+{"sample_id": "002182", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.49}
+{"sample_id": "000717", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001428", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.43}
+{"sample_id": "000918", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.55}
+{"sample_id": "002132", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.56}
+{"sample_id": "000393", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.62}
+{"sample_id": "001452", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "002225", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "000064", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.65}
+{"sample_id": "000120", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.53}
+{"sample_id": "000436", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.36}
+{"sample_id": "001833", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "000449", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.46}
+{"sample_id": "001153", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.63}
+{"sample_id": "001366", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "001283", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "000818", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.59}
+{"sample_id": "002206", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002425", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.58}
+{"sample_id": "001655", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.52}
+{"sample_id": "001423", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002169", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.37}
+{"sample_id": "000602", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.61}
+{"sample_id": "001919", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.66}
+{"sample_id": "002198", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001415", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.53}
+{"sample_id": "001356", "badge": "MANAGER CHECK", "color": "#FFE135", "rule": {"human_review": ">=0.5"}, "sure": true}
+{"sample_id": "001831", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001889", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.61}
+{"sample_id": "000794", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.5}
+{"sample_id": "002423", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001476", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.73}
+{"sample_id": "000284", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.55}
+{"sample_id": "001279", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.49}
+{"sample_id": "002299", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.54}
+{"sample_id": "000986", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.59}
+{"sample_id": "002429", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.59}
+{"sample_id": "000620", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002290", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.39}
+{"sample_id": "002111", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.42}
+{"sample_id": "002427", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.64}
+{"sample_id": "000488", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.46}
+{"sample_id": "001115", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002301", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.58}
+{"sample_id": "000506", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "002309", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "000311", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.39}
+{"sample_id": "000206", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.44}
+{"sample_id": "002026", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.55}
+{"sample_id": "001404", "badge": "RESTOCK CHECK", "color": "#E8384F", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.69}
+{"sample_id": "001035", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.46}
+{"sample_id": "000457", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.55}
+{"sample_id": "001436", "badge": "KEEP WATCHING", "color": "#9AD0EC", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.43}
+{"sample_id": "001051", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.56}
+{"sample_id": "002306", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "000301", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": true, "p": 0.75}
+{"sample_id": "001040", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "001982", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.45}
+{"sample_id": "001194", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "002332", "badge": "CLOSE FRIDGE", "color": "#3CC8FF", "rule": {"fridge_open": ">=0.75"}, "sure": true}
+{"sample_id": "000778", "badge": "NO ACTION", "color": "#4ED36B", "rule": {"from_choice": "staff_action"}, "sure": false, "p": 0.41}

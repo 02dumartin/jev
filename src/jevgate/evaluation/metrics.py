@@ -1,139 +1,85 @@
-"""Scoring: 7-way box accuracy and F1, ROC / AUC, calibration, and cluster-bootstrap CIs (PLAN_brackish.md v6 §6)."""
+"""Binary calibration against an explicit target; no fitted calibration transform.
 
-from collections import defaultdict
+ECE uses equal-width bins over P(yes). Confidence ECE instead bins max(p, 1-p)
+against correctness. Empty bins have null means and zero weight; p=1 is in the last bin.
+"""
 
 import numpy as np
 
 
-def multiclass_metrics(y, pred, classes: list[str]) -> dict:
-    """Accuracy, macro F1, per-class precision/recall/F1/support and the confusion matrix (rows = y)."""
-    y, pred = np.asarray(y), np.asarray(pred)
-    idx = {c: i for i, c in enumerate(classes)}
-    cm = np.zeros((len(classes), len(classes)), dtype=int)
-    for a, b in zip(y, pred, strict=True):
-        cm[idx[a], idx[b]] += 1
-    per_class = {}
-    for c, i in idx.items():
-        tp, fp, fn = cm[i, i], cm[:, i].sum() - cm[i, i], cm[i, :].sum() - cm[i, i]
-        p = tp / (tp + fp) if tp + fp else None
-        r = tp / (tp + fn) if tp + fn else None
-        f1 = 2 * p * r / (p + r) if p and r else (0.0 if p is not None and r is not None else None)
-        per_class[c] = {"precision": p, "recall": r, "f1": f1, "support": int(cm[i, :].sum())}
-    f1s = [v["f1"] for v in per_class.values() if v["support"] > 0 and v["f1"] is not None]
+def binary_metrics(labels, probabilities, bins: int = 10) -> dict:
+    y, p = np.asarray(labels, dtype=float), np.asarray(probabilities, dtype=float)
+    if y.ndim != 1 or y.shape != p.shape or not len(y):
+        raise ValueError("labels/probabilities must be nonempty aligned 1D arrays")
+    if not np.all(np.isin(y, [0, 1])) or not np.all(np.isfinite(p) & (p >= 0) & (p <= 1)):
+        raise ValueError("binary labels and finite probabilities in [0,1] required")
+    if type(bins) is not int or bins < 1:
+        raise ValueError("bins must be a positive integer")
+    pred = p >= 0.5
+    correct = pred == y
+
+    def reliability(values, targets):
+        indices = np.minimum((values * bins).astype(int), bins - 1)
+        rows = []
+        for i in range(bins):
+            mask = indices == i
+            n = int(mask.sum())
+            rows.append(
+                {
+                    "lower": i / bins,
+                    "upper": (i + 1) / bins,
+                    "n": n,
+                    "mean_probability": float(values[mask].mean()) if n else None,
+                    "observed_rate": float(targets[mask].mean()) if n else None,
+                }
+            )
+        ece = sum(r["n"] / len(y) * abs(r["mean_probability"] - r["observed_rate"]) for r in rows if r["n"])
+        mce = max(abs(r["mean_probability"] - r["observed_rate"]) for r in rows if r["n"])
+        return rows, float(ece), float(mce)
+
+    rel, ece, mce = reliability(p, y)
+    conf = np.maximum(p, 1 - p)
+    conf_rel, conf_ece, _ = reliability(conf, correct)
+    safe = np.clip(p, 1e-15, 1 - 1e-15)
+    tp, fp = int(np.sum(pred & (y == 1))), int(np.sum(pred & (y == 0)))
+    fn, tn = int(np.sum(~pred & (y == 1))), int(np.sum(~pred & (y == 0)))
+    selective = []
+    for threshold in [0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 0.95, 0.99]:
+        keep = conf >= threshold
+        selective.append(
+            {
+                "threshold": threshold,
+                "n": int(keep.sum()),
+                "coverage": float(keep.mean()),
+                "risk": float(1 - correct[keep].mean()) if keep.any() else None,
+            }
+        )
     return {
-        "accuracy": float((y == pred).mean()) if len(y) else None,
-        "macro_f1": float(np.mean(f1s)) if f1s else None,
-        "n": int(len(y)),
-        "per_class": per_class,
-        "confusion": {"classes": classes, "matrix": cm.tolist()},
+        "n": len(y),
+        "positives": int(y.sum()),
+        "prevalence": float(y.mean()),
+        "accuracy": float(correct.mean()),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "precision": tp / (tp + fp) if tp + fp else None,
+        "recall": tp / (tp + fn) if tp + fn else None,
+        "f1": 2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else None,
+        "brier": float(np.mean((p - y) ** 2)),
+        "nll": float(-np.mean(y * np.log(safe) + (1 - y) * np.log(1 - safe))),
+        "ece": ece,
+        "mce": mce,
+        "confidence_ece": conf_ece,
+        "reliability": rel,
+        "confidence_reliability": conf_rel,
+        "selective": selective,
     }
 
 
-def ovr_counts(y, pred, cls: str) -> dict:
-    """One-vs-rest 2x2 for one class: tp, fn, fp, tn, sensitivity, specificity."""
-    y, pred = np.asarray(y) == cls, np.asarray(pred) == cls
-    tp, fn = int((y & pred).sum()), int((y & ~pred).sum())
-    fp, tn = int((~y & pred).sum()), int((~y & ~pred).sum())
-    return {"tp": tp, "fn": fn, "fp": fp, "tn": tn,
-            "sens": tp / (tp + fn) if tp + fn else None, "spec": tn / (tn + fp) if tn + fp else None}
+def took_product(events: list[dict]) -> bool:
+    """Proxy only: count(take) > count(put); no events is negative, not unknown.
 
-
-def auroc(y_bin, score) -> float | None:
-    """Rank-based AUC (ties count half). None when one side is empty."""
-    y_bin, score = np.asarray(y_bin, dtype=bool), np.asarray(score, dtype=float)
-    n_pos, n_neg = int(y_bin.sum()), int((~y_bin).sum())
-    if n_pos == 0 or n_neg == 0:
-        return None
-    order = np.argsort(score, kind="mergesort")
-    ranks = np.empty(len(score))
-    sorted_s = score[order]
-    # average ranks for ties
-    _, first, counts = np.unique(sorted_s, return_index=True, return_counts=True)
-    avg = first + (counts - 1) / 2 + 1
-    ranks[order] = np.repeat(avg, counts)
-    return float((ranks[y_bin].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
-
-
-def roc_points(y_bin, score, max_points: int = 400) -> dict:
-    """ROC curve (fpr, tpr) thinned to at most max_points for plotting."""
-    y_bin, score = np.asarray(y_bin, dtype=bool), np.asarray(score, dtype=float)
-    order = np.argsort(-score, kind="mergesort")
-    s, yb = score[order], y_bin[order]
-    distinct = np.r_[np.where(np.diff(s))[0], len(s) - 1]
-    tps, fps = np.cumsum(yb)[distinct], np.cumsum(~yb)[distinct]
-    tpr = np.r_[0, tps / max(yb.sum(), 1)]
-    fpr = np.r_[0, fps / max((~yb).sum(), 1)]
-    if len(fpr) > max_points:
-        keep = np.unique(np.linspace(0, len(fpr) - 1, max_points).round().astype(int))
-        fpr, tpr = fpr[keep], tpr[keep]
-    return {"fpr": fpr.round(5).tolist(), "tpr": tpr.round(5).tolist()}
-
-
-def ece_top(correct, confidence, n_bins: int) -> float | None:
-    """Top-label ECE: per confidence bin |mean confidence - accuracy|, weighted by bin share."""
-    correct, conf = np.asarray(correct, dtype=float), np.asarray(confidence, dtype=float)
-    if len(conf) == 0:
-        return None
-    bins = np.clip((conf * n_bins).astype(int), 0, n_bins - 1)
-    return float(sum((bins == b).mean() * abs(conf[bins == b].mean() - correct[bins == b].mean())
-                     for b in range(n_bins) if (bins == b).any()))
-
-
-def reliability_bins(correct, confidence, n_bins: int) -> list[dict]:
-    """Per-bin mean confidence, accuracy and count (reliability diagram)."""
-    correct, conf = np.asarray(correct, dtype=float), np.asarray(confidence, dtype=float)
-    bins = np.clip((conf * n_bins).astype(int), 0, n_bins - 1)
-    return [{"lo": b / n_bins, "hi": (b + 1) / n_bins, "count": int((bins == b).sum()),
-             "mean_conf": float(conf[bins == b].mean()) if (bins == b).any() else None,
-             "accuracy": float(correct[bins == b].mean()) if (bins == b).any() else None}
-            for b in range(n_bins)]
-
-
-def brier_multi(y, probs: list[dict], classes: list[str]) -> float | None:
-    """Mean over boxes of sum_k (p_k - 1[y = k])^2."""
-    if not len(y):
-        return None
-    p = np.asarray([[pr[c] for c in classes] for pr in probs], dtype=float)
-    onehot = np.asarray([[float(yy == c) for c in classes] for yy in y])
-    return float(((p - onehot) ** 2).sum(1).mean())
-
-
-class ClusterBootstrap:
-    """Resample whole clusters (a track and all its boxes); statistics see the items of the drawn clusters."""
-
-    def __init__(self, cluster_of_item: list, n: int, seed: int):
-        members = defaultdict(list)
-        for i, key in enumerate(cluster_of_item):
-            members[key].append(i)
-        self.members = [np.asarray(v, dtype=int) for v in members.values()]
-        rng = np.random.default_rng(seed)
-        k = len(self.members)
-        self.draws = [rng.integers(0, k, k) for _ in range(n)] if k else []
-
-    def ci(self, stat) -> tuple[float | None, float | None]:
-        """2.5 / 97.5 percentiles of stat(item indices) over the resamples (None values skipped)."""
-        vals = [v for draw in self.draws
-                if (v := stat(np.concatenate([self.members[c] for c in draw]))) is not None]
-        if not vals:
-            return None, None
-        lo, hi = np.percentile(vals, [2.5, 97.5])
-        return float(lo), float(hi)
-
-
-def brier_binary(y, p) -> float | None:
-    """Mean squared error of P(y = 1)."""
-    y, p = np.asarray(y, dtype=float), np.asarray(p, dtype=float)
-    return float(((p - y) ** 2).mean()) if len(y) else None
-
-
-def evaluate_endpoints(delta_ci_low: float | None, call_ratio: float | None, steps: list[dict]) -> list[dict]:
-    """Pre-registered sequential criteria: check in order, stop at the first failure."""
-    out, still_testing = [], True
-    for step in steps:
-        if not still_testing or delta_ci_low is None or call_ratio is None:
-            out.append({**step, "result": "not_tested"})
-            continue
-        ok = delta_ci_low >= step["min_delta_acc_ci_low"] and call_ratio <= step["max_vlm_call_ratio"]
-        out.append({**step, "result": "pass" if ok else "fail"})
-        still_testing = ok
-    return out
+    Counts do not establish object identity, possession, or a purchase.
+    """
+    return sum(e["label"] == "take" for e in events) > sum(e["label"] == "put" for e in events)

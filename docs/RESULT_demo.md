@@ -1,3 +1,5 @@
+> 최신 재계산 결과와 calibration: [Retail 결과](retail-results/report.md). 아래는 기존 데모 설명이며 확신 비율은 정확도가 아니다.
+
 # Store and Next acts: 편의점 카메라 × Jev 데모 결과 (2026-10-15)
 
 > 계획: `docs/PLAN_demo.md` · 결과 폴더: `runs/261015_retail-demo-v2/` (188개 클립 처리, 영상은 7개 클립)
@@ -46,7 +48,6 @@
 | ④ 행동 | 같은 코드 규칙 (확률이 없으므로 "애매함" 규칙은 적용되지 않음) | 코드 규칙 (아래 3.2) |
 
 - 역할 분리: **VLM = 무엇이 보이나**, **Jev = 그래서 무엇을 판단하나**, **코드 = 무엇을 실행하나**.
-- Brackish 실험에서 배운 점을 반영했다: VLM이 이미 답("이건 물고기")을 내고 Jev가 그걸 다시 묻는 구조는 Jev가 할 일이 없다. 그래서 VLM에게는 관찰만 시켰다.
 
 ### 2.3 장면 설명(STATE) 예시 (클립 002491)
 ```json
@@ -58,7 +59,7 @@
 
 ## 3. Jev에 넘긴 질문 (Multiple questions, 요청 1번)
 
-### 3.1 질문 6개 (`configs/retail_demo.yaml` `questions`)
+### 3.1 질문 6개 (`configs/retail.yaml` `questions`)
 | 카드 | 형식 | Jev에 보낸 문장 | 선택지 |
 |---|---|---|---|
 | Shopper needs help? | **Boolean** (noul) | Does a shopper appear to need staff help right now (searching, hesitating for long, struggling)? | yes / no |
@@ -115,7 +116,7 @@ VLM은 글자를 하나씩 생성하므로 쓸 글이 길수록 느리다. **설
 **Multiple questions의 이득은 주로 토큰과 요청 수다.** state를 한 번만 보내기 때문이다. 시간도 짧지만, 따로 보낸 요청도 동시에 처리되므로 차이는 0.1초 정도다.
 
 ### 4.4 비용
-- **Jev**: TypeSafe 단가를 확인하지 못해 **토큰 수로만** 보고한다. 클립당 873토큰, 188개 전체 16만 토큰. 단가를 알면 `cost.jev_usd_per_1m_tokens`에 넣어 바로 환산할 수 있다.
+- **Jev**: TypeSafe 단가를 확인하지 못해 **토큰 수로만** 보고한다. 클립당 873토큰, 188개 전체 16만 토큰. 단가가 확인되면 총 토큰 수에 적용해 별도로 환산해야 한다.
 - **VLM**: 로컬 GPU(B200)라 API 비용은 없다. GPU 시간으로 보면 188개 기준 장면 설명 525초, VLM only 답변 272초다.
 
 ## 5. 영상에 넣은 7개 클립
@@ -148,17 +149,17 @@ VLM은 글자를 하나씩 생성하므로 쓸 글이 길수록 느리다. **설
 ## 7. 발표에서 밝힐 한계
 1. **take/put/touch는 데이터셋 주석을 넣은 것이다.** 실제 시스템에서는 행동 검출기가 필요하다. 그래서 "Product taken?"과 주석의 일치율 0.88은 참고값이다.
 2. **판단의 정답은 없다.** "도움 제안", "매니저 확인"이 맞는지는 아무도 채점하지 않았다. 예를 들어 002491(휴대폰을 보며 물건을 찾는 장면)에서 Jev는 "도움 필요 NO"로 봤다. 판단 기준을 바꾸려면 질문 문장에 기준을 써야 한다.
-3. **Jev의 판단은 VLM의 장면 설명을 넘지 못한다.** VLM이 구역을 "other"로 적거나 상황을 놓치면 Jev도 따라간다 (Brackish 결과와 같은 교훈).
+3. **Jev의 판단은 VLM의 장면 설명을 넘지 못한다.** VLM이 구역을 "other"로 적거나 상황을 놓치면 Jev도 따라간다.
 4. MANAGER CHECK 비율(44%)은 확신 기준 0.75와 대상 카드 선택에 따라 크게 달라진다. 운영에 쓰려면 기준을 정하는 별도 검증이 필요하다.
 5. 회전은 자세 정보가 있는 클립에서만 정확하고, 시간은 B200 GPU 한 장 기준이다.
 
 ## 8. 재현
 ```bash
-uv run python scripts/prepare_retail_demo.py                       # 회전·행동 메타 (meta.jsonl)
-uv run python scripts/run_retail_demo.py --set run.name=retail-demo-v2 reuse_states_from=runs/261015_retail-demo
-uv run python scripts/render_retail_demo.py --run-dir runs/261015_retail-demo-v2   # 영상만 다시 그리기
+uv run python scripts/prepare_retail.py                       # 회전·행동 메타 (meta.jsonl)
+uv run python scripts/run_retail.py --set run.name=retail-demo-v2 reuse_states_from=runs/261015_retail-demo
+uv run python scripts/render_retail.py --run-dir runs/261015_retail-demo-v2   # 영상만 다시 그리기
 ```
-- 설정: `configs/retail_demo.yaml` (질문, 행동 규칙, 화면, 포함·제외 클립)
-- 코드: `src/jevgate/demo/` (meta, clip, observe, decide, render, pipeline)
+- 설정: `configs/retail.yaml` (질문, 행동 규칙, 화면, 포함·제외 클립)
+- 코드: `src/jevgate/` (meta, clip, observe, decide, render, pipeline)
 - 입출력 원본: `runs/261015_retail-demo-v2/{vlm,vlm_only,jev,actions}/`
 - 장면 설명은 `runs/261015_retail-demo`에서 만든 것을 재사용했다 (같은 모델, 같은 프레임, 같은 프롬프트).

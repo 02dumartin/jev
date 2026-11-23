@@ -6,17 +6,17 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-# data and outputs (data lives outside git; runs are reproduced from config + commit)
-data/
-runs/
+# data: RetailAction / Intel VideoSum clips and metadata are committed;
+# frames.json (~2 GB) exceeds GitHub's 100 MB limit -> re-download from huggingface.co/datasets/Voxel51/RetailAction
+data/retailaction/frames.json
+data/retailaction/frames_download.log
 
 # logs
 
 # etc
 .claude/
 .github/
-# yolo training outputs and downloaded weights
-train/
+# downloaded model weights
 *.pt
 
 # fonts copied from detect-and-reason (Noto Sans KR, OFL); 6 MB each, kept out of git

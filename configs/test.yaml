@@ -1,8 +1,0 @@
-# Final test evaluation. Run once, after thresholds were fitted on dev (PLAN_brackish.md §8).
-inherit: base.yaml
-
-run:
-  name: test
-  split: test
-
-thresholds_file: thresholds.yaml

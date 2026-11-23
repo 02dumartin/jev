@@ -1,252 +1,328 @@
-"""Stage order of one run (PLAN_brackish.md v6). Each stage writes into the run folder; later stages read those files.
+"""Demo run: meta -> VLM states -> Jev decisions (multi + single) -> actions -> summary -> dashboard video.
 
-S1 yolo     YOLO + ByteTrack on every frame of the split's videos -> detections, track summaries
-S2 labels   y per box (AAU IoU) and per track; GT objects the detector missed
-S3 describer  small VLM: description + p_yes per track (representative frame)
-S4 jev      Jev track_ok per track (track summary + description)
-S4 vlm      large VLM p_yes per track (same images)
-S5 eval     thresholds (dev: fit, test: frozen file), metrics, tables, figures, README
-S6 viz      sample frames and one video per split video
+runs/<YYMMDD>_retail-demo/
+├── run.yaml
+├── data/                 links: clips, meta.jsonl, LICENSE, NOTICE.txt
+├── vlm/input/            prompts.jsonl, frames/<sample>.jpg (the frames the VLM saw, events circled)
+├── vlm/output/           states.jsonl (or reused from reuse_states_from)
+├── vlm_only/             input/prompts.jsonl, output/answers.jsonl (the VLM answers the questions itself)
+├── jev/input/            requests.jsonl (one request per clip, every question)
+├── jev/output/           responses.jsonl, decisions.jsonl (cards), single.jsonl (one request per question)
+├── actions/actions.jsonl
+└── evaluation/           summary.json, calibration/, dashboard.mp4, stills/<n>_<sample>.png
 """
 
-import hashlib
+import datetime as dt
 import json
-import shutil
+import random
 import time
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import yaml
 from dotenv import load_dotenv
+from PIL import Image
 
-from jevgate.core.runio import RunDir, link, read_jsonl, write_jsonl
-from jevgate.data.brackish import build_frames, load_gt
-from jevgate.data.labels import label_boxes, label_tracks, missed_objects
-from jevgate.data.splits import run_videos
-from jevgate.detectors.track import summarize_tracks
-from jevgate.evaluation.evaluate import RunData, evaluate
-from jevgate.judges.base import Budget
-from jevgate.judges.gate import fit_accept_threshold, fit_band, fit_conf_threshold, fit_tau
-from jevgate.outputs import plots, report
-from jevgate.outputs.viz import Renderer
+from jevgate.core.runio import git_info, link, next_run_dir, read_jsonl, write_jsonl
+from jevgate.decision.policy import Decider, action, vlm_cards
+from jevgate.evaluation.metrics import took_product
+from jevgate.models.budget import Budget
+from jevgate.preprocess.frames import read_frames
 
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def yolo_cache_key(cfg: dict, videos: list[str]) -> str:
-    """Detector outputs depend only on these settings; identical keys reuse runs/_cache/yolo/<key>/."""
-    blob = json.dumps({"track": cfg["track"], "videos": videos,
-                       "max_frames": cfg["run"].get("max_frames_per_video")}, sort_keys=True)
-    return hashlib.sha256(blob.encode()).hexdigest()[:12]
+def contact_sheet(imgs: list[Image.Image], cols: int = 4) -> Image.Image:
+    w, h = imgs[0].size
+    rows = (len(imgs) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * w, rows * h))
+    for i, im in enumerate(imgs):
+        sheet.paste(im, ((i % cols) * w, (i // cols) * h))
+    return sheet
 
 
-def free_gpu() -> None:
-    import gc
+def pick_for_video(
+    rows: list[dict], n: int, seed: int, include: list[str] = (), exclude: list[str] = (), fill_others: bool = True
+) -> list[dict]:
+    """`include` clips first (in the given order), then round-robin over action badges for variety; `exclude` never."""
+    by_id = {r["sample_id"]: r for r in rows}
+    missing = [s for s in include if s not in by_id]
+    if missing:
+        raise ValueError(f"render.include clips not in this run: {missing}")
+    out = [by_id[s] for s in include if s not in exclude][:n]
+    if not fill_others:
+        return out
+    groups = defaultdict(list)
+    for r in rows:
+        if r["sample_id"] not in exclude and r["sample_id"] not in include:
+            groups[r["action"]["badge"]].append(r)
+    rng = random.Random(seed)
+    for g in groups.values():
+        rng.shuffle(g)
+    keys = sorted(groups)
+    while len(out) < n and any(groups.values()):
+        for k in keys:
+            if groups[k] and len(out) < n:
+                out.append(groups[k].pop())
+    return out
 
-    import torch
 
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-
-class Pipeline:
+class RetailRun:
     def __init__(self, cfg: dict, repo: Path):
         self.cfg, self.repo = cfg, repo
-        self.systems = set(cfg["run"]["systems"])
-        self.budget = Budget(cfg)
-        self.timing: dict[str, float] = {}
+        self.root = repo / cfg["data"]["root"]
         load_dotenv(repo / ".env")
+        self.path = next_run_dir(repo / cfg["run"]["out_root"], cfg["run"]["name"])
+        self.path.mkdir(parents=True)
+        git = git_info(repo) | {"time": dt.datetime.now().isoformat(timespec="seconds")}
+        (self.path / "run.yaml").write_text(
+            yaml.safe_dump({"run_id": self.path.name, "git": git, "config": cfg}, sort_keys=False, allow_unicode=True)
+        )
+        for name in (cfg["data"]["clips_dir"], cfg["data"]["meta"], *cfg["data"]["license_files"]):
+            link(self.root / name, self.path / "data" / name)
+        self.answers: dict[str, dict] = {}
 
-    def _time(self, key: str, started: float) -> None:
-        self.timing[key] = round(time.perf_counter() - started, 3)
-
-    # S1 -----------------------------------------------------------------------------------
-    def yolo(self, run: RunDir, frames: list[dict], videos: list[str]) -> tuple[list[dict], list[dict]]:
-        import ultralytics
-
-        cfg = self.cfg
-        run.file("videos").write_text("\n".join(videos) + "\n")
-        link(Path(ultralytics.__file__).parent / "cfg" / "trackers" / cfg["track"]["tracker"],
-             run.path / "yolo" / "input" / "tracker.yaml")
-        cache = self.repo / cfg["run"]["out_root"] / "_cache" / "yolo" / yolo_cache_key(cfg, videos)
-        if (cache / "detections.jsonl").exists():
-            detections = read_jsonl(cache / "detections.jsonl")
-            meta = json.loads((cache / "timing.json").read_text())
-            log(f"S1 yolo: reused {cache.relative_to(self.repo)}")
-        else:
-            from jevgate.detectors.track import VideoTracker
-
-            tracker, detections, frame_ms = VideoTracker(cfg, self.repo), [], []
-            for k, video in enumerate(videos, 1):
-                files = [f["file"] for f in frames if f["video"] == video]
-                rows, ms = tracker.run(video, files)
-                detections += rows
-                frame_ms += ms
-                log(f"  yolo+track {k}/{len(videos)} {video}: {len(files)} frames, {len(rows)} boxes")
-            meta = {"yolo_track_s": round(sum(frame_ms) / 1000, 3),
-                    "yolo_track_ms_per_frame_median": round(float(np.median(frame_ms)), 2)}
-            cache.mkdir(parents=True, exist_ok=True)
-            write_jsonl(cache / "detections.jsonl", detections)
-            (cache / "timing.json").write_text(json.dumps(meta))
-            del tracker
-            free_gpu()
-        self.timing |= meta
-        run.write("detections", detections)
-        tracks = summarize_tracks(detections, frames, cfg["data"]["frame_wh"])
-        run.write("tracks", tracks)
-        log(f"S1 yolo: {len(detections)} boxes, {len(tracks)} tracks, "
-            f"{sum(d['track_uid'] is None for d in detections)} untracked")
-        return detections, tracks
-
-    # S3, S4 -------------------------------------------------------------------------------
-    def describer(self, run: RunDir, tracks: list[dict], detections: list[dict]) -> list[dict]:
-        rows, prompts = self._vlm_stage(run, tracks, detections, "describer", describe=True)
-        run.write("describer", rows)
-        run.write("describer_prompts", prompts)
-        log(f"S3 describer: {len(rows)} tracks described")
-        return rows
-
-    def _vlm_stage(self, run, tracks, detections, section: str, describe: bool):
-        from jevgate.judges.vlm import TrackVLM
-
-        started = time.perf_counter()
-        judge = TrackVLM(self.cfg, section, self.budget if section == "vlm" else None, run.dir("track_images"),
-                         describe, log)
-        self._time(f"{section}_load_s", started)
-        started = time.perf_counter()
-        out = judge.judge(tracks, {d["box_id"]: d for d in detections})
-        self._time(f"{section}_s", started)
-        del judge
-        free_gpu()
+    def p(self, rel: str) -> Path:
+        out = self.path / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
         return out
 
-    def jev(self, run: RunDir, tracks: list[dict], small_rows: list[dict] | None) -> list[dict]:
-        from jevgate.judges.jev import JevJudge
+    def observe(self, metas: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
+        """VLM states (generated, or reused from an earlier run) and the VLM-only answers."""
+        reuse = self.cfg.get("reuse_states_from")
+        states = {r["sample_id"]: r for r in read_jsonl(self.repo / reuse / "vlm/output/states.jsonl")} if reuse else {}
+        if reuse:
+            log(f"  VLM states reused from {reuse}")
+        need_answers = self.cfg["vlm_only"]["enabled"]
+        answers, prompts, answer_prompts = {}, [], []
+        if not reuse or need_answers:
+            from jevgate.models.observer import Observer
 
-        own = run.path / "jev" / "output" / "responses.jsonl"
-        resume = [p for p in (self.repo / self.cfg["run"]["out_root"]).glob("*/jev/output/responses.jsonl")
-                  if p.resolve() != own.resolve()]
-        descriptions = {r["track_uid"]: r["description"] for r in small_rows} if small_rows else None
-        judge = JevJudge(self.cfg, self.repo, self.budget, run.file("jev_requests"), run.file("jev_responses"),
-                         resume, descriptions, log)
-        started = time.perf_counter()
-        rows = judge.judge(tracks)
-        self._time("jev_s", started)
-        run.write("jev", rows)
-        log(f"S3 jev: {len(tracks)} tracks, {self.budget.jev_requests} new requests, "
-            f"{sum(r['reused'] for r in rows)} tracks from stored responses, {self.budget.jev_tokens} new tokens")
-        return rows
+            vlm = Observer(self.cfg)
+            for k, m in enumerate(metas, 1):
+                sid = m["sample_id"]
+                frames = read_frames(self.root / self.cfg["data"]["clips_dir"] / f"{sid}.mp4", m["rotation_cw"])
+                if not reuse:
+                    o = vlm.observe(frames, m["events"])
+                    contact_sheet(o.pop("images")).save(self.p(f"vlm/input/frames/{sid}.jpg"), quality=88)
+                    prompts.append({"sample_id": sid, "prompt": o["prompt"], "frame_indices": o["frame_indices"]})
+                    states[sid] = {"sample_id": sid, **{k2: o[k2] for k2 in ("state", "raw", "vlm_s")}}
+                if need_answers:
+                    a = vlm.answer(frames, m["events"])
+                    answer_prompts.append({"sample_id": sid, "prompt": a.pop("prompt")})
+                    answers[sid] = {"sample_id": sid, **a}
+                if k % 20 == 0:
+                    log(f"  VLM {k}/{len(metas)}")
+            del vlm
+            import gc
 
-    def vlm(self, run: RunDir, tracks: list[dict], detections: list[dict]) -> list[dict]:
-        rows, prompts = self._vlm_stage(run, tracks, detections, "vlm", describe=False)
-        run.write("vlm", rows)
-        run.write("vlm_prompts", prompts)
-        log(f"S4 vlm: {len(rows)} tracks")
-        return rows
+            import torch
 
-    # S5 -----------------------------------------------------------------------------------
-    def thresholds(self, run, videos, detections, box_labels, track_labels, jev_rows, vlm_rows, small_rows) -> dict:
-        """Dev: fit t, v, v_small, tau, small_lo/hi. Test: read the frozen dev file and refuse a mismatch."""
-        cfg = self.cfg
-        if cfg["run"]["split"] == "test":
-            th = yaml.safe_load((self.repo / cfg["thresholds_file"]).read_text())
-            if th.get("fit_split") != "dev" or th.get("max_frames_per_video") or th.get("max_videos"):
-                raise ValueError("thresholds_file is not a full dev fit; refusing the test run")
-            dev_videos = yaml.safe_load((self.repo / cfg["video_split"]["file"]).read_text())["videos"][
-                cfg["video_split"]["run_split_to_video_split"]["dev"]]
-            if th.get("fit_videos") != dev_videos:
-                raise ValueError("thresholds_file was fitted on other videos; refusing the test run")
-            return th
-        scored = [d for d in detections if box_labels[d["box_id"]]["scored"]]
-        tracks_scored = [u for u, r in track_labels.items() if r["y_track"] is not None]
-        th = {"fit_split": "dev", "fit_videos": videos, "fit_run": run.run_id, "fit_commit": run.git().get("commit"),
-              "max_videos": cfg["run"].get("max_videos"),
-              "max_frames_per_video": cfg["run"].get("max_frames_per_video"),
-              "t": fit_conf_threshold([box_labels[d["box_id"]]["y"] for d in scored], [d["cls"] for d in scored],
-                                      [d["conf"] for d in scored])}
-        y_track = [track_labels[u]["y_track"] for u in tracks_scored]
-        if vlm_rows:
-            p_yes = {r["track_uid"]: r["p_yes"] for r in vlm_rows}
-            th["v"] = fit_accept_threshold(y_track, [p_yes[u] for u in tracks_scored])
-        if small_rows:
-            p_small = [{r["track_uid"]: r["p_yes"] for r in small_rows}[u] for u in tracks_scored]
-            th["v_small"] = fit_accept_threshold(y_track, p_small)
-            th["small_lo"], th["small_hi"] = fit_band(y_track, p_small, cfg["gate"]["max_auto_error"])
-        if jev_rows:
-            p_ok = {r["track_uid"]: r["p_ok"] for r in jev_rows}
-            th["tau"] = fit_tau(y_track, [p_ok[u] for u in tracks_scored], cfg["gate"]["max_auto_error"],
-                                cfg["gate"]["tau_grid_step"])
-            th["max_auto_error"] = cfg["gate"]["max_auto_error"]
-        return th
+            gc.collect()
+            torch.cuda.empty_cache()
+        if prompts:
+            write_jsonl(self.p("vlm/input/prompts.jsonl"), prompts)
+        write_jsonl(self.p("vlm/output/states.jsonl"), (states[m["sample_id"]] for m in metas))
+        if answers:
+            write_jsonl(self.p("vlm_only/input/prompts.jsonl"), answer_prompts)
+            write_jsonl(self.p("vlm_only/output/answers.jsonl"), (answers[m["sample_id"]] for m in metas))
+        return states, answers
 
-    def run(self) -> RunDir:
-        cfg = self.cfg
-        run = RunDir.create(cfg, self.repo)
-        log(f"run folder: {run.path}")
-        gt = load_gt(cfg)
-        videos = run_videos(cfg, self.repo)
-        frames = build_frames(cfg, gt, videos)
-        log(f"split {cfg['run']['split']}: {len(videos)} videos, {len(frames)} frames")
+    def decide(self, metas: list[dict], states: dict[str, dict]) -> dict[str, dict]:
+        decider, cfg = Decider(self.cfg, Budget(self.cfg)), self.cfg
 
-        detections, tracks = self.yolo(run, frames, videos)
+        def one(m):
+            st = states[m["sample_id"]]["state"]
+            dec = decider.multi(st)
+            single = decider.single(st) if cfg["jev"]["single_question_compare"] else None
+            return m["sample_id"], dec, single
 
-        box_labels = label_boxes(detections, gt, cfg)
-        track_labels = label_tracks(tracks, {r["box_id"]: r for r in box_labels}, cfg["label"]["track_ok_share"])
-        run.write("box_labels", box_labels)
-        run.write("track_labels", track_labels)
-        missed = missed_objects(detections, frames, gt, cfg["label"]["match_iou"])
-        kinds = ("correct", "misclassified", "false", "unscored")
-        types = {k: sum(r["type"] == k for r in track_labels) for k in kinds}
-        log(f"S2 labels: {sum(r['scored'] for r in box_labels)} scored boxes, track types {types}, "
-            f"detector recall upper bound {missed['recall_upper_bound']:.3f}")
+        out = {}
+        with ThreadPoolExecutor(cfg["jev"]["max_concurrency"]) as pool:
+            for sid, dec, single in pool.map(one, metas):
+                out[sid] = {"dec": dec, "single": single, "action": action(cfg, dec["cards"])}
+        for m in metas:
+            a = self.answers.get(m["sample_id"])
+            if a:
+                cards = vlm_cards(cfg, a["answers"])
+                out[m["sample_id"]]["vlm_only"] = {"cards": cards, "action": action(cfg, cards), "vlm_s": a["vlm_s"]}
+        order = [m["sample_id"] for m in metas]
+        write_jsonl(
+            self.p("jev/input/requests.jsonl"), ({"sample_id": s, "request": out[s]["dec"]["request"]} for s in order)
+        )
+        write_jsonl(
+            self.p("jev/output/responses.jsonl"),
+            (
+                {"sample_id": s, "response": out[s]["dec"]["response"], "latency_ms": out[s]["dec"]["latency_ms"]}
+                for s in order
+            ),
+        )
+        write_jsonl(
+            self.p("jev/output/decisions.jsonl"), ({"sample_id": s, "cards": out[s]["dec"]["cards"]} for s in order)
+        )
+        if cfg["jev"]["single_question_compare"]:
+            write_jsonl(self.p("jev/output/single.jsonl"), ({"sample_id": s, **out[s]["single"]} for s in order))
+        write_jsonl(
+            self.p("actions/actions.jsonl"),
+            (
+                {"sample_id": s, "jev": out[s]["action"], "vlm_only": out[s].get("vlm_only", {}).get("action")}
+                for s in order
+            ),
+        )
+        return out
 
-        small_rows = self.describer(run, tracks, detections) if {"small_vlm", "jev", "gate", "gate_small"} & \
-            self.systems else None
-        jev_rows = self.jev(run, tracks, small_rows) if {"jev", "gate"} & self.systems else None
-        vlm_rows = self.vlm(run, tracks, detections) if {"vlm_all", "gate", "gate_small"} & self.systems else None
+    def summary(self, metas, states, decs) -> dict:
+        ids = [m["sample_id"] for m in metas]
+        multi = [decs[s]["dec"]["latency_ms"] for s in ids]
+        single = [decs[s]["single"]["wall_ms"] for s in ids if decs[s]["single"]]
+        tok_m = [sum(decs[s]["dec"]["usage"].get(k, 0) for k in ("input_tokens", "output_tokens")) for s in ids]
+        tok_s = [decs[s]["single"]["tokens"] for s in ids if decs[s]["single"]]
+        sure = defaultdict(list)
+        for s in ids:
+            for c in decs[s]["dec"]["cards"]:
+                sure[c["title"]].append(c["sure"])
+        cards = {s: {c["key"]: c for c in decs[s]["dec"]["cards"]} for s in ids}
+        meta = {m["sample_id"]: m for m in metas}
+        agree = [
+            (cards[s]["product_taken"]["p"] >= 0.5) == took_product(meta[s]["events"])
+            for s in ids
+            if "product_taken" in cards[s]
+        ]
+        n_q = len(self.cfg["questions"])
+        return {
+            "clips": len(ids),
+            "questions_per_clip": n_q,
+            "vlm_s_median": float(np.median([states[s]["vlm_s"] for s in ids])),
+            "jev_multi_ms_median": float(np.median(multi)),
+            "jev_multi_ms_p90": float(np.percentile(multi, 90)),
+            "jev_single_wall_ms_median": float(np.median(single)) if single else None,
+            "requests_per_clip": {"multi": 1, "single": n_q},
+            "tokens_per_clip_median": {
+                "multi": float(np.median(tok_m)),
+                "single": float(np.median(tok_s)) if tok_s else None,
+            },
+            "sure_rate_per_question": {k: round(float(np.mean(v)), 3) for k, v in sure.items()},
+            "actions": dict(Counter(decs[s]["action"]["badge"] for s in ids).most_common()),
+            "product_taken_agrees_with_annotation": round(float(np.mean(agree)), 3) if agree else None,
+            "rotated_clips": sum(m["rotation_cw"] != 0 for m in metas),
+            "clips_without_pose_axis": sum(m["pose_axis"] is None for m in metas),
+            "unparsed_states": sum("raw" in states[s]["state"] for s in ids),
+            "jev_models": sorted({decs[s]["dec"]["model"] for s in ids}),
+            "vlm_only": self.vlm_only_summary(ids, decs),
+        }
 
-        bl = {r["box_id"]: r for r in box_labels}
-        tl = {r["track_uid"]: r for r in track_labels}
-        th = self.thresholds(run, videos, detections, bl, tl, jev_rows, vlm_rows, small_rows)
-        if cfg["run"]["split"] == "dev":
-            run.file("thresholds").write_text(yaml.safe_dump(th, sort_keys=False))
-        log("S5 thresholds: " + ", ".join(f"{k}={th[k]}" for k in ("t", "v", "v_small", "tau", "small_lo", "small_hi")
-                                          if k in th))
+    @staticmethod
+    def vlm_only_summary(ids, decs) -> dict | None:
+        rows = [decs[s]["vlm_only"] for s in ids if "vlm_only" in decs[s]]
+        if not rows:
+            return None
+        return {
+            "vlm_s_median": float(np.median([r["vlm_s"] for r in rows])),
+            "invalid_answers": sum(not c["valid"] for r in rows for c in r["cards"]),
+            "actions": dict(Counter(r["action"]["badge"] for r in rows).most_common()),
+            "same_action_as_jev_path": round(
+                float(
+                    np.mean(
+                        [
+                            decs[s]["vlm_only"]["action"]["badge"] == decs[s]["action"]["badge"]
+                            for s in ids
+                            if "vlm_only" in decs[s]
+                        ]
+                    )
+                ),
+                3,
+            ),
+        }
 
-        started = time.perf_counter()
-        data = RunData(cfg, frames, detections, tracks, box_labels, track_labels, jev_rows, vlm_rows, th, self.timing,
-                       small_rows)
-        metrics, judgments, curves = evaluate(data, missed, self.budget.summary(), cfg)
-        run.write("judgments", judgments)
-        run.write_json("metrics", metrics)
-        if cfg["run"]["split"] == "test":
-            run.write_json("endpoints", {"primary": metrics["primary"], "endpoints": metrics["endpoints"]})
-        if data.gate_rows:
-            run.write("gate", data.gate_rows)
-            report.write_errors(run.file("errors"), tracks, tl, data)
-        plots.all_figures(run, metrics, curves, data)
-        self._time("evaluate_s", started)
-        metrics["timing"] = self.timing
-        run.write_json("metrics", metrics)
-        run.file("metrics_md").write_text(report.metrics_md(metrics))
-        run.file("readme").write_text(report.readme(run.run_id, metrics))
-        run.update_meta({"thresholds": th, "timing": self.timing, "budget_used": self.budget.summary()})
-        log("S5 evaluation written")
+    def render(self, metas, states, decs) -> Path:
+        from jevgate.visualization.dashboard import Dashboard, render_clip
+        from jevgate.visualization.video import h264_writer
 
-        if cfg["viz"]["enabled"]:
-            route = {r["track_uid"]: r["routed_to"] for r in data.gate_rows} if jev_rows and vlm_rows else None
-            renderer = Renderer(cfg, frames, detections, judgments, gt, route)
-            renderer.samples(run.dir("viz"), cfg["viz"]["sample_frames"], cfg["viz"]["seed"])
-            if cfg["viz"]["videos"] and "gate" in self.systems:
-                for video in videos:
-                    renderer.video(run.dir("videos"), video, *cfg["viz"]["video_panels"], cfg["track"]["fps"])
-            log("S6 viz written")
-        return run
+        rows = [m | {"action": decs[m["sample_id"]]["action"]} for m in metas]
+        r = self.cfg["render"]
+        chosen = pick_for_video(
+            rows, r["clips_in_video"], r["seed"], r.get("include", []), r.get("exclude", []), r.get("fill_others", True)
+        )
+        dash = Dashboard(self.cfg, self.repo)
+        path = self.p("evaluation/dashboard.mp4")
+        writer = h264_writer(path, dash.W, dash.H, self.cfg["render"]["video_fps"])
+        for k, m in enumerate(chosen, 1):
+            sid = m["sample_id"]
+            frames = read_frames(self.root / self.cfg["data"]["clips_dir"] / f"{sid}.mp4", m["rotation_cw"])
+            render_clip(dash, writer, frames, m, k, len(chosen), states[sid], decs[sid])
+            last = dash.frame(
+                frames[-1],
+                m,
+                len(frames),
+                k,
+                len(chosen),
+                states[sid],
+                decs[sid],
+                dash.finish_s(states[sid], decs[sid]) + 1,
+            )
+            Image.fromarray(last).save(self.p(f"evaluation/stills/{k:02d}_{sid}.png"))
+        writer.close()
+        return path
+
+    def run(self) -> Path:
+        metas = read_jsonl(self.root / self.cfg["data"]["meta"])
+        if self.cfg["run"].get("max_clips"):
+            metas = metas[: self.cfg["run"]["max_clips"]]
+        log(f"run folder {self.path}: {len(metas)} clips")
+        states, self.answers = self.observe(metas)
+        log(f"VLM done: median {np.median([states[m['sample_id']]['vlm_s'] for m in metas]):.2f} s per clip")
+        decs = self.decide(metas, states)
+        log("Jev done")
+        summ = self.summary(metas, states, decs)
+        (self.p("evaluation/summary.json")).write_text(json.dumps(summ, indent=2))
+        log(f"summary: {summ}")
+        from jevgate.evaluation.report import evaluate_run
+
+        evaluate_run(self.path, self.path / "evaluation/calibration")
+        video = self.render(metas, states, decs)
+        log(f"video: {video}")
+        return self.path
 
 
-def copy_thresholds(run: RunDir, dest: Path) -> None:
-    """Freeze a dev run's thresholds for the test run."""
-    shutil.copy(run.file("thresholds"), dest)
+def load_results(run_dir: Path, cfg: dict) -> tuple[list[dict], dict, dict]:
+    """(metas, states, decs) rebuilt from a finished run folder, without calling any model."""
+    metas = read_jsonl(run_dir / "data" / cfg["data"]["meta"])
+    keep = {r["sample_id"] for r in read_jsonl(run_dir / "vlm/output/states.jsonl")}
+    metas = [m for m in metas if m["sample_id"] in keep]
+    states = {r["sample_id"]: r for r in read_jsonl(run_dir / "vlm/output/states.jsonl")}
+    cards = {r["sample_id"]: r["cards"] for r in read_jsonl(run_dir / "jev/output/decisions.jsonl")}
+    resp = {r["sample_id"]: r for r in read_jsonl(run_dir / "jev/output/responses.jsonl")}
+    single_path = run_dir / "jev/output/single.jsonl"
+    single = {r["sample_id"]: r for r in read_jsonl(single_path)} if single_path.exists() else {}
+    vo_path = run_dir / "vlm_only/output/answers.jsonl"
+    answers = {r["sample_id"]: r for r in read_jsonl(vo_path)} if vo_path.exists() else {}
+    decs = {}
+    for m in metas:
+        sid = m["sample_id"]
+        response = resp[sid]["response"]
+        dec = {
+            "cards": cards[sid],
+            "latency_ms": resp[sid]["latency_ms"],
+            "usage": response.get("usage", {}),
+            "model": response.get("model"),
+        }
+        decs[sid] = {"dec": dec, "single": single.get(sid), "action": action(cfg, cards[sid])}
+        if sid in answers:
+            vc = vlm_cards(cfg, answers[sid]["answers"])
+            decs[sid]["vlm_only"] = {"cards": vc, "action": action(cfg, vc), "vlm_s": answers[sid]["vlm_s"]}
+    return metas, states, decs
+
+
+def rerender(run_dir: Path, cfg: dict, repo: Path) -> Path:
+    """Redraw evaluation/dashboard.mp4 and stills/ of an existing run with the given (render) config."""
+    import shutil
+
+    metas, states, decs = load_results(run_dir, cfg)
+    shutil.rmtree(run_dir / "evaluation" / "stills", ignore_errors=True)
+    shim = RetailRun.__new__(RetailRun)
+    shim.cfg, shim.repo, shim.path, shim.root = cfg, repo, run_dir, repo / cfg["data"]["root"]
+    return shim.render(metas, states, decs)

@@ -1,0 +1,41 @@
+{
+  "clips": 188,
+  "questions_per_clip": 7,
+  "vlm_s_median": 2.762,
+  "jev_multi_ms_median": 275.6,
+  "jev_multi_ms_p90": 387.0300000000001,
+  "jev_single_wall_ms_median": 390.4,
+  "requests_per_clip": {
+    "multi": 1,
+    "single": 7
+  },
+  "tokens_per_clip_median": {
+    "multi": 912.0,
+    "single": 3393.0
+  },
+  "sure_rate_per_question": {
+    "Shopper needs help?": 1.0,
+    "Product taken?": 0.75,
+    "Fridge door open?": 0.878,
+    "Crowding": 0.995,
+    "Shopper activity": 0.793,
+    "Staff action": 0.053,
+    "Needs a person to look?": 0.553
+  },
+  "actions": {
+    "NO ACTION": 96,
+    "OFFER HELP": 32,
+    "CLOSE FRIDGE": 25,
+    "KEEP WATCHING": 23,
+    "MANAGER CHECK": 9,
+    "RESTOCK CHECK": 2,
+    "TIDY SHELF": 1
+  },
+  "product_taken_agrees_with_annotation": 0.878,
+  "rotated_clips": 139,
+  "clips_without_pose_axis": 8,
+  "unparsed_states": 0,
+  "jev_models": [
+    "jev-1.13.0"
+  ]
+}

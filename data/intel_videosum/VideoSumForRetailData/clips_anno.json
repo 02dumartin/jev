@@ -1,0 +1,226 @@
+[
+    {
+        "id": 0,
+        "video": "clips/clip1.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are two shoppers. Both are walking towards the camera. Shopper 1 is in the front wearing a black shirt while shopper 2 is at the back wearing a light-colored shirt and a spectacle. The two shoppers are looking at the merchandise on the left shelf as they are walking. Shopper 1 is only seeing and not touching any item on the shelf. Shopper 2 is seen putting his glasses into his shirt pocket as he enters the video frame. Although the two shoppers have not taken any item from the shelf, the shelf on the top is empty and needs restocking. The rest of the shelves are well stocked and do not need any restocking. The contents on the farther part of the shelf consists of items majority of which are packed in black, yellow, and green packages. No other details are visible. The items closer to the camera can be seen better. It appears that this part of the shelf is full of items that can be used in camping like candles, lanterns, straps, etc."
+            }
+        ]
+    },
+    {
+        "id": 1,
+        "video": "clips/clip2.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are two shoppers. Both are walking towards the camera from the farther end. They are walking close to each other. Shopper 1 at the front is wearing a black shirt while Shopper 2 at the back is wearing a light-colored shirt and a spectacle. The two shoppers stop almost immediately. Shopper 1 is taking out a green colored item. Shopper 2 is seen picking an item from the bottom part of the shelf though it is not very clear which item he has picked. From the earlier part of the video where there was a clear view of the bottom part of the shelf, I am guessing Shopper 2 is picking an item in red colored package. The shelf on the top is empty although the two shoppers have not picked any item from that part of the shelf. Rest of the shelf is well stocked. The contents on the farther part of the shelf consists of items majority of which are packed in black, yellow, and green packages. No other details are visible. The items closer to the camera can be seen better. It appears that this part of the shelf is full of items that can be used in camping like candles, lanterns, straps, etc."
+            }
+        ]
+    },
+    {
+        "id": 2,
+        "video": "clips/clip3.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are two shoppers. Shopper 1 is wearing a black shirt and is closer to the camera. Shopper 2 is wearing a light-colored shirt, a spectacle, and is slightly further away from the camera. In the beginning, both are standing close to each other and are checking out items already in their hands. Shopper 1 has a green colored item while shopper 2 is holding a red colored item and checking it out in detail. Then, Shopper 1 picks a green colored box from the top part of the shelf with his right hand. The entire shelf looks well stocked except for the top rack of the shelf which is empty and needs restocking. The two shoppers have not picked any item from this empty shelf. The contents on the farther part of the shelf consists of items majority of which are packed in black, yellow, and green packages. No other details are visible. The items closer to the camera can be seen better. It appears that this part of the shelf is full of items that can be used in camping like candles, lanterns, straps, etc."
+            }
+        ]
+    },
+    {
+        "id": 3,
+        "video": "clips/clip4.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are two shoppers. Shopper 1 is wearing a black shirt and is closer to the camera. Shopper 2 is wearing a light-colored shirt, a spectacle, and is slightly further away from the camera. In the beginning, both are standing close to each other and checking out items already in their hands. Shopper 1 has a green colored item in his left hand and a slightly bigger green colored item in his right hand. Shopper 2 is holding a red colored item and checking it out in detail. He seems to be checking out the price and other details on the back of the item. Mid way through, shopper 1 turns right and walks away, out of field of view with the two items in his hands. The entire shelf looks well stocked except for the top rack of the shelf, which is empty and needs restocking. The two shoppers have not picked any item from this empty shelf. The contents on the farther part of the shelf consists of items majority of which are packed in black, yellow, and green packages. No other details are visible. The items closer to the camera can be seen better. It appears that this part of the shelf is full of items that can be used in camping like candles, lanterns, straps, etc."
+            }
+        ]
+    },
+    {
+        "id": 4,
+        "video": "clips/clip5.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There is only one shopper in this video. Shopper 1 is wearing a light-colored shirt with a spectacle and is standing on left side of frame looking at the shelf in front of him. In the beginning, the shopper is holding a red colored item in his left hand. Very soon he picks another red colored item from the shelf. He seemed to struggle a little bit in taking the item out of the shelf. The contents on the farther part of the shelf consists of items, majority of which are packed in black, yellow, and green packages. No other details are visible. The items closer to the camera can be seen better. It appears that this part of the shelf is full of items that can be used in camping, like candles, lanterns, straps, etc.  The entire shelf looks well stocked except for the top rack of the shelf which is empty and needs restocking. The shopper has not picked any item from this empty shelf."
+            }
+        ]
+    },
+    {
+        "id": 5,
+        "video": "clips/clip6.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There is only one shopper in this video. Shopper 1 is wearing a light-colored shirt, a spectacle, and is standing on the left side of the frame looking at the shelf in front of him. In the beginning he has two items in his hands, both of which are red in color. The one in his left hand is slightly bigger than the one in his right hand. Midway through he turns left and walks away with both the items in his hands. The entire shelf looks well stocked except for the top rack of the shelf, which is empty, and needs restocking. The shopper has not picked any item from this empty shelf. The items closer to the camera can be seen better. It appears that this part of the shelf is full of items that can be used in camping, like candles, lanterns, straps, etc. The contents on the farther part of the shelf consists of items, majority of which are packed in black, yellow, and green packages. No other details are visible."
+            }
+        ]
+    },
+    {
+        "id": 6,
+        "video": "clips/clip7.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "In this video a single shopper is seen walking towards the camera. Initially, only a part of the red basket the shopper is carrying is seen in the video. Midway through, the entire shopper with the red basket in his left hand is visible. The red basket appears empty though something that looks like a brochure is partially visible. The shopper is wearing a light-colored shirt and is wearing a spectacle. Towards the end of the video, he is seen stopping in front of items that are used in camping. It appears that this part of the shelf is full of items that can be used in camping, like candles, lanterns, straps, etc. The entire shelf looks well stocked except for the top rack of the shelf, which is empty, and needs restocking. The shopper has not picked any item from this empty shelf. The contents on the farther part of the shelf consists of items, majority of which are packed in black, yellow, and green packages. No other details are visible."
+            }
+        ]
+    },
+    {
+        "id": 7,
+        "video": "clips/clip8.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "A single shopper is seen in this video standing facing the shelf and in the bottom part of the frame. He is wearing a light-colored shirt and a spectacle. The shopper is carrying a red colored basket in his left hand. The basket appears to be empty. Midway through the video the shopper takes a step towards the shelf and picks a single item in green packing and places it in the basket using his right hand. He has picked the single item from the mid part of the shelf. The entire shelf looks well stocked except for the top part of the shelf which is empty. The shopper has not picked any item from this part of the shelf. The rest of the shelf looks well stocked and does not need any restocking. The contents on the farther part of the shelf consists of items, majority of which are packed in black, yellow, and green packages. No other details are visible of these items. "
+            }
+        ]
+    },
+    {
+        "id": 8,
+        "video": "clips/clip9.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "A single shopper is seen in this video standing facing the shelf and in the bottom part of the frame. He's wearing a light-colored shirt and a spectacle. The shopper is carrying a red colored basket in his left hand. The entire basket is not clearly visible and hence not clear if it's empty or filled with some items. Then the shopper leans towards the shelf and picks a single item with his right hand. The item is in a blue-green packaged. He proceeds to place the item in the basket. The entire shelf looks well stocked except for the top part of the shelf which is empty. The shopper has not picked any item from this part of the shelf. The rest of the shelf looks well stocked and does not need any restocking. The contents on the farther part of the shelf consists of items, majority of which are packed in black, yellow, and green packages. No other details are visible of these items."
+            }
+        ]
+    },
+    {
+        "id": 9,
+        "video": "clips/clip10.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "A single shopper is seen in this video standing facing the shelf and in the bottom part of the frame. He's wearing a light-colored shirt and a spectacle. The shopper is carrying a red colored basket in his left hand. The entire basket is not clearly visible, but it does seem to contain something in a blue colored package which the shopper has just placed in the basket given his right hand was seen inside the basket. Then the shopper leans towards the shelf and checks out an item in orange package. He picks this single item with his right hand and proceeds to place the item in the basket. The entire shelf looks well stocked except for the top part of the shelf which is empty. The shopper has not picked any item from this part of the shelf. The rest of the shelf looks well stocked and does not need any restocking. The contents on the farther part of the shelf consists of items, majority of which are packed in black, yellow, and green packages. No other details are visible of these items."
+            }
+        ]
+    },
+    {
+        "id": 10,
+        "video": "clips/clip11.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There is only one shopper. The shopper is wearing a plaid shirt and spectacles. In the beginning, the shopper is positioned on the left side of the frame, examining the nearer side of the shelf relative to camera which is stocked with items such as camping lanterns and cleansing agents, arranged at the top. In the middle part of the shelf, various tools including grommets, a pocket saw, candles, and other camping related items can be observed. Then, the shopper moves away from the camera without picking any items, carrying a red basket on his right hand containing one or two indistinct items. The majority of the items on the farther end of the shelf, towards which the shopper is heading, are neatly organized and hung on hangers. Midway through, there are not many items kept at top. Items in the middle appear to be steel containers and items made up of plastic with red, green, orange, and yellow colors, while those at the bottom are packed in cardboard boxes."
+            }
+        ]
+    },
+    {
+        "id": 11,
+        "video": "clips/clip12.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "In this video there are three shoppers, shopper 1 wearing a black shirt is walking towards the camera but the face is not captured in the frame. The other two shoppers, shopper 2 is wearing a plaid shirt and a spectacle and shopper 3 wearing a black shirt both of whom are near to the camera are walking towards shopper 1 in the opposite direction. Shopper 2 with a plaid shirt attempts to pick an item hanged to a hanger whereas the shopper 1 seems to just look at the shelf where there are not many items kept at top shelf. Items in the middle appear to be steel containers and items made up of plastic with red, green, orange, and yellow colors, while those at the bottom are packed in cardboard boxes. Towards the right of shopper 3 items such as camping lanterns and cleansing agents are arranged at the top shelf. In the middle part, various tools including grommets, a pocket saw, candles, and other helpful camping items can be observed."
+            }
+        ]
+    },
+    {
+        "id": 12,
+        "video": "clips/clip13.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are 3 shoppers in this video. Shopper 1 is in middle of the other two shoppers wearing a plaid shirt and a spectacle, he is turned towards the right shelf. He is seen picking up an item which is hanged to a hanger from his right hand. Shopper 2 who is to the left of shopper 1 and farther away from camera is wearing a black shirt and he is also looking at the same shelf as shopper 1. He picks up an item from top part of the shelf and starts looking at the items packaging. Shopper 3 who is to the right of shopper 1 and nearer to the camera is also wearing a black shirt and is turned in the opposite direction looking at the left shelf as compared to the other two. He picks up a green colored item which looks like a cleansing agent and appears to read the label."
+            }
+        ]
+    },
+    {
+        "id": 13,
+        "video": "clips/clip14.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are three shoppers. Shopper 1 is wearing a plaid shirt with spectacles. Shopper 2 and Shopper 3 are both wearing a black shirt. Shopper 1 is positioned in middle of the other two shoppers. He is looking at the items hanged to a hanger in the shelf which is to the right side of the frame relative to camera. Shopper 2 who is farther away from camera, and he is to the left of shopper 1, is seen replacing an item in the right shelf where there are other items packed in silver, green, orange, and red colors. Shopper 3 is nearer to the camera and positioned to the left of shopper 1 is seen holding a green colored item which looks like a cleansing agent, and he is turned at shelf which is to the left of camera frame and opposite to other two shoppers. Later, he replaces the product and start to walk away from the other two shoppers."
+            }
+        ]
+    },
+    {
+        "id": 14,
+        "video": "clips/clip15.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are two shoppers. Shopper 1 is nearer to the camera and is wearing a plaid shirt with spectacles. Shopper 2 is to the left of shopper 1 and is seen wearing a black shirt. Shopper 2 appears to look at the middle section of the shelf where items packed in cardboard boxes at bottom and items packed in the colors green, red, orange, and silver can be seen at top and middle part.  Shelf towards the right of the camera frame and to the right of shopper 1 is stocked with items such as camping lanterns and cleansing agents, arranged at the top. In the middle part of the shelf, various tools including grommets, a pocket saw, candles, and other helpful camping items can be observed. Shopper 2, in the beginning appears to walk away with an item in his hand but later turned back and hangs it in the hanger. Towards the end shopper 2 is seen walking away from the camera."
+            }
+        ]
+    },
+    {
+        "id": 15,
+        "video": "clips/clip16.mp4",
+        "conversations": [
+            {
+                "from": "human",
+                "value": "<video>\nCan you give me a summary of the video?"
+            },
+            {
+                "from": "gpt",
+                "value": "There are 2 shoppers in this video. Shopper 1 is wearing a plaid shirt and a spectacle. Shopper 2 who is not completely captured in the frame seems to wear a black shirt and is moving away with his back turned towards the camera. There is a shelf towards the right of the camera frame. Shopper 2 is hanging an item back to a hanger and then quickly walks away in a similar fashion as shopper 2. Contents of the nearer side of the shelf with respect to camera seems to be camping lanterns and cleansing agents, arranged at the top. In the middle part of the shelf, various tools including grommets, a pocket saw, candles, and other helpful camping items can be observed. Midway through the shelf contains items which appear to be steel containers and items made up of plastic with red, green, orange, and yellow colors, while those at the bottom are packed in cardboard boxes. Contents at the farther part of the shelf are well stocked and organized but are not glaringly visible."
+            }
+        ]
+    }
+]

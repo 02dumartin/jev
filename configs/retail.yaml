@@ -1,0 +1,140 @@
+# Retail demo (docs/PLAN_demo.md): store camera clip -> VLM observes -> Jev answers many questions at once -> code acts.
+run:
+  name: retail-demo
+  out_root: runs
+  max_clips: null                 # null = every clip in the selection; smoke sets a few
+
+data:
+  root: data/retail-demo/retailaction
+  clips_dir: clips                # rank0 view, <sample_id>.mp4, <=32 frames at 6 fps
+  selection: selection.json       # clips picked from the test split (scripts/prepare_retail.py)
+  samples: samples.json           # dataset metadata: actions and interaction points
+  frames: frames.json             # per-frame pose; used only to find the upright rotation
+  meta: meta.jsonl                # prepared: rotation, events with times and points
+  license_files: [LICENSE, NOTICE.txt]
+
+# Upright view: rotate each clip by a multiple of 90 degrees so the subject's body axis (hip -> head) points up.
+rotation:
+  head_joints: [0, 1, 2]          # top_of_head, nose, neck
+  hip_joints: [15, 16, 17]        # middle_of_waist, left_hip, right_hip
+  min_frames: 3                   # frames with both head and hip needed; otherwise keep 0 degrees
+
+# Dataset action annotations (take / put / touch) go into the VLM prompt as known events, standing in for an
+# in-store action detector. They are shown on screen as such, never as something the VLM found by itself.
+events:
+  enabled: true
+  marker_radius_frac: 0.06        # circle at the interaction point on frames inside the event
+  marker_color: [255, 210, 0]
+
+vlm:
+  model: Qwen/Qwen3-VL-8B-Instruct
+  dtype: bfloat16
+  device: cuda:0
+  frames: 8                       # evenly spaced frames per clip
+  frame_px: 448
+  max_new_tokens: 320
+  prompt: >-
+    These are {n} frames in time order from a ceiling camera in a convenience store (faces are blurred,
+    the view is rotated so people stand upright). {events}Describe only what is observable, with no advice or
+    judgement. Answer as compact JSON with these keys:
+    area (drinks fridge / snack shelf / checkout / entrance / other), people_count (int),
+    children_present (true/false), fridge_door_open (true/false/null if no fridge),
+    shopper_movement (standing still / slowly browsing / walking through),
+    carrying (none / basket / bag / products in hands / child),
+    products_handled (list of short phrases: what was picked up or put back, using the known events),
+    shelf_condition (tidy / gaps / messy / not visible), floor_obstruction (none or short phrase),
+    notes (one sentence about the scene).
+
+jev:
+  model: jev-latest
+  endpoint: https://api.typesafe.ai/v1/systemone
+  api_key_env: TYPESAFE_API_KEY
+  timeout_s: 60
+  max_retries: 4
+  max_concurrency: 8
+  single_question_compare: true   # also ask each question in its own request (latency/requests comparison)
+  confident: 0.75                 # a card is "sure" when its top probability >= this
+
+# One state, many typed questions (Boolean = noul, Choice, Score). Order = order of the cards on screen.
+questions:
+  needs_help:
+    type: noul
+    title: Shopper needs help?
+    instructions: Does a shopper appear to need staff help right now (searching, hesitating for long, struggling)?
+  product_taken:
+    type: noul
+    title: Product taken?
+    instructions: Did the shopper end up keeping a product (picked up and not put back)?
+  fridge_open:
+    type: noul
+    title: Fridge door open?
+    instructions: Is a fridge door open, or left open without anyone using it?
+  crowding:
+    type: score
+    title: Crowding
+    instructions: How crowded is this area?
+    criteria: [empty, one shopper, a few shoppers, busy, blocked]
+  shopper_activity:
+    type: choice
+    title: Shopper activity
+    instructions: What is the main shopper doing?
+    criteria: {browsing: null, picking_products: null, returning_product: null, passing_through: null, no_shopper: null}
+  staff_action:
+    type: choice
+    title: Staff action
+    instructions: What should a staff member do next?
+    criteria: {none: null, offer_help: null, close_fridge: null, tidy_shelf: null, restock_check: null, keep_watching: null}
+
+# Code turns the answers into one action badge (first matching rule wins). `unsure_in` sends the clip to a manager
+# when any of the listed cards is below jev.confident: Jev's own probabilities decide when a person must look.
+# The last rule takes the staff_action choice.
+actions:
+  - {badge: "CLOSE FRIDGE", when: {fridge_open: ">=0.75"}, color: "#3CC8FF"}
+  - {badge: "OFFER HELP", when: {needs_help: ">=0.75"}, color: "#FF8C1A"}
+  - {badge: "MANAGER CHECK", when: {unsure_in: [needs_help, product_taken, fridge_open, crowding, shopper_activity]},
+     color: "#FFE135"}
+  - from_choice: staff_action
+    badges:
+      none: {badge: "NO ACTION", color: "#4ED36B"}
+      keep_watching: {badge: "KEEP WATCHING", color: "#9AD0EC"}
+      offer_help: {badge: "OFFER HELP", color: "#FF8C1A"}
+      close_fridge: {badge: "CLOSE FRIDGE", color: "#3CC8FF"}
+      tidy_shelf: {badge: "TIDY SHELF", color: "#D35BFF"}
+      restock_check: {badge: "RESTOCK CHECK", color: "#E8384F"}
+
+render:
+  clips_in_video: 24              # dashboard video: at most this many clips; `include` first (in order)
+  include: ["001404", "002429", "002491", "000421", "000134", "000951", "000953"]
+  exclude: ["001246", "000217", "001797", "000457", "000368", "000436", "002198", "001283", "000701", "000458"]
+  fill_others: false              # true: top up to clips_in_video with other clips, chosen for variety
+  seed: 0
+  fps: 6                          # the clips' own frame rate (each clip frame is repeated to reach video_fps)
+  video_fps: 30                   # output frame rate; the measured VLM/Jev times are replayed at this resolution
+  hold_s: 3.0                     # freeze on the last frame with the full decision
+  canvas: [1920, 1080]
+  title: "Store and Next acts"
+  credit: "Video: RetailAction (Standard AI), Standard.AI Dataset License. Faces blurred by the dataset."
+  font_dir: assets/fonts          # Noto Sans KR (copied from detect-and-reason, OFL)
+  fonts: {regular: NotoSansKR-Regular.ttf, medium: NotoSansKR-Medium.ttf, bold: NotoSansKR-Bold.ttf}
+  colors: {background: "#FAF8F2", panel: "#FFFFFF", title: "#333333", ink: "#2B2B2B", muted: "#7A7A7A",
+           line: "#E3DED3", sure: "#3F9E5A", unsure: "#E0A800", bar: "#4C78A8", bar_bg: "#ECE8DF",
+           total: "#D62D20"}
+
+# Comparison path shown in the top-right panel: the same VLM looks at the same frames and answers the same
+# questions itself (one generation, no probabilities).
+vlm_only:
+  enabled: true
+  max_new_tokens: 200
+  prompt: >-
+    These are {n} frames in time order from a ceiling camera in a convenience store (faces are blurred, the view is
+    rotated so people stand upright). {events}Answer each question as compact JSON with exactly these keys,
+    using only the allowed values:
+    {questions}
+
+# Reuse VLM states from an earlier run of this config (same frames, prompt and model) instead of re-generating.
+reuse_states_from: null
+
+budget:
+  max_jev_requests: 3000
+  max_jev_tokens: 5000000
+  max_vlm_calls: 1000
